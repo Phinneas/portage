@@ -1,0 +1,278 @@
+---
+import SpecLayout from '../../layouts/SpecLayout.astro';
+
+const meta = [
+  { k: 'Source', v: 'Squarespace 7.0 / 7.1' },
+  { k: 'Method', v: 'WordPress XML (WXR) + crawl', cy: true },
+  { k: 'Output', v: 'Markdown · MDX' },
+  { k: 'Target', v: 'Content collections', cy: true },
+  { k: 'Spec rev', v: '2026.06 · r2' },
+];
+
+const toc = [
+  { id: 's01', num: '01', label: 'Overview' },
+  { id: 's02', num: '02', label: 'Export' },
+  { id: 's03', num: '03', label: 'Content mapping' },
+  { id: 's04', num: '04', label: 'Transforms' },
+  { id: 's05', num: '05', label: 'Assets' },
+  { id: 's06', num: '06', label: 'Routes & redirects' },
+  { id: 's07', num: '07', label: 'Out of scope' },
+  { id: 's08', num: '08', label: 'Edge cases' },
+  { id: 's09', num: '09', label: 'Output' },
+  { id: 's10', num: '10', label: 'CLI' },
+  { id: 's11', num: '11', label: 'Verification' },
+];
+---
+
+<SpecLayout
+  title="Route Spec — Squarespace → Astro · Portage"
+  description="Portage route specification: migrating a Squarespace blog to Astro via the WordPress XML (WXR) export with a crawl fallback. Field mapping, transforms, assets, routes and redirects, limitations, edge cases, output schema, and CLI."
+  origin="Squarespace"
+  status="beta"
+  lede="A crossing for a Squarespace blog: posts, pages, images, and categories mapped to Astro content collections via the WordPress XML export — with a crawl fallback for the pages the export leaves on the dock."
+  meta={meta}
+  toc={toc}
+>
+  <section class="spec-sec" id="s01">
+    <h2><span class="num">01</span>Overview</h2>
+    <p>This route carries a Squarespace blog into an Astro project as <strong>content collections</strong> backed by Markdown or MDX. The primary source is Squarespace's <strong>WordPress-format XML (WXR) export</strong> — a single, parseable file — supplemented by an optional crawl of the live site for content the export omits.</p>
+    <p>Squarespace's export is deliberately narrow: it covers the primary blog and basic pages, and little else. Portage treats the WXR as the spine of the crossing and the crawl as connective tissue, then reconciles both into one manifest before writing Astro-native files.</p>
+    <div class="note keep">
+      <span class="lbl">Moves intact</span>
+      <p>Published blog posts, basic pages, inline images, categories and tags, authors, publish dates, and the blog permalink structure.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s02">
+    <h2><span class="num">02</span>Export &amp; crawl</h2>
+    <h3>A · WordPress XML export</h3>
+    <p>From <code>Settings → Import &amp; Export → Export → WordPress</code>, Squarespace produces a <code>.xml</code> (WXR) file. Portage parses each <code>&lt;item&gt;</code>: <code>title</code>, <code>wp:post_name</code> (slug), <code>content:encoded</code> (body), <code>excerpt:encoded</code>, <code>pubDate</code>, <code>category</code> (tags &amp; categories), <code>dc:creator</code> (author), and <code>wp:status</code>.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">extract · wxr</span><span class="meta">bash</span></div>
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> squarespace \
+    <span class="fl">--export</span> ./Squarespace-Wordpress-Export.xml <span class="fl">--to</span> ./astro-project
+<span class="out">→ 96 posts · 5 pages · 22 categories · 3 authors · 204 images referenced</span></pre>
+    </div>
+    <h3>B · Crawl fallback</h3>
+    <p>Because the export omits index, gallery, portfolio, album, event, and commerce collections, Portage can crawl the live site from its <code>sitemap.xml</code> to recover pages the WXR leaves out, parsing rendered block HTML and SEO tags.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">extract · wxr + crawl</span><span class="meta">bash</span></div>
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> squarespace <span class="fl">--export</span> ./export.xml \
+    <span class="fl">--crawl</span> https://www.example.com <span class="fl">--to</span> ./astro-project</pre>
+    </div>
+    <div class="note warn">
+      <span class="lbl">One blog per export</span>
+      <p>Squarespace exports only the <strong>primary</strong> blog page. If the site runs multiple blogs, export each separately, or lean on the crawl to recover the rest.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s03">
+    <h2><span class="num">03</span>Content mapping</h2>
+    <p>Each WXR <code>&lt;item&gt;</code> becomes one Markdown/MDX file. Posts and pages split into separate collections by <code>wp:post_type</code>.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>WXR field</th><th>Type</th><th></th><th>Astro frontmatter</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">title</span></td><td><span class="ty">string</span></td><td class="arrowcell">→</td><td><span class="af">title</span></td><td>Required.</td></tr>
+          <tr><td><span class="gf">wp:post_name</span></td><td><span class="ty">string</span></td><td class="arrowcell">→</td><td><span class="af">(filename)</span></td><td>Slug &amp; entry id.</td></tr>
+          <tr><td><span class="gf">excerpt:encoded</span></td><td><span class="ty">html</span></td><td class="arrowcell">→</td><td><span class="af">description</span></td><td>Falls back to a generated excerpt.</td></tr>
+          <tr><td><span class="gf">content:encoded</span></td><td><span class="ty">html</span></td><td class="arrowcell">→</td><td><span class="af">(body)</span></td><td>Converted to Markdown/MDX — see §04.</td></tr>
+          <tr><td><span class="gf">pubDate · wp:post_date</span></td><td><span class="ty">date</span></td><td class="arrowcell">→</td><td><span class="af">pubDate</span></td><td>Coerced by zod.</td></tr>
+          <tr><td><span class="gf">category[domain=post_tag]</span></td><td><span class="ty">string[]</span></td><td class="arrowcell">→</td><td><span class="af">tags</span></td><td></td></tr>
+          <tr><td><span class="gf">category[domain=category]</span></td><td><span class="ty">string[]</span></td><td class="arrowcell">→</td><td><span class="af">categories</span></td><td>Disambiguated by domain attribute.</td></tr>
+          <tr><td><span class="gf">dc:creator</span></td><td><span class="ty">string</span></td><td class="arrowcell">→</td><td><span class="af">authors</span></td><td></td></tr>
+          <tr><td><span class="gf">wp:status</span></td><td><span class="ty">enum</span></td><td class="arrowcell">→</td><td><span class="af">draft</span></td><td><code>draft</code> → <code>draft: true</code>.</td></tr>
+          <tr><td><span class="gf">wp:post_type</span></td><td><span class="ty">enum</span></td><td class="arrowcell">→</td><td><span class="af">(collection)</span></td><td><code>post</code> → blog; <code>page</code> → pages.</td></tr>
+          <tr><td><span class="gf">(first inline image)</span></td><td><span class="ty">url</span></td><td class="arrowcell">→</td><td><span class="af">heroImage</span></td><td>Derived — WXR has no feature-image field; <code>--hero</code> controls it.</td></tr>
+          <tr><td><span class="gf">(crawled &lt;title&gt; · meta)</span></td><td><span class="ty">string</span></td><td class="arrowcell">→</td><td><span class="af">seo</span></td><td>Only when <code>--crawl</code> is on — SEO meta is not in the WXR.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s04">
+    <h2><span class="num">04</span>Content transforms</h2>
+    <p>Squarespace stores body content as <code>content:encoded</code> HTML — rendered blocks wrapped in <code>sqs-block</code> containers with inline styles. Portage strips the wrapper markup and inline <code>style</code> attributes, keeping the semantic content, then converts to Markdown. Common blocks map as follows.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Squarespace block</th><th></th><th>Output (Markdown)</th><th>Output (MDX)</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">text / markdown</span></td><td class="arrowcell">→</td><td>Paragraphs &amp; lists</td><td>Same</td></tr>
+          <tr><td><span class="gf">image + caption</span></td><td class="arrowcell">→</td><td><code>![alt](src)</code> + caption</td><td><span class="af">&lt;Figure&gt;</span></td></tr>
+          <tr><td><span class="gf">gallery / summary</span></td><td class="arrowcell">→</td><td>Image sequence</td><td><span class="af">&lt;Gallery&gt;</span></td></tr>
+          <tr><td><span class="gf">code</span></td><td class="arrowcell">→</td><td>Fenced block</td><td>Fenced block</td></tr>
+          <tr><td><span class="gf">quote</span></td><td class="arrowcell">→</td><td>Blockquote</td><td>Blockquote</td></tr>
+          <tr><td><span class="gf">button</span></td><td class="arrowcell">→</td><td>Markdown link</td><td><span class="af">&lt;Button&gt;</span></td></tr>
+          <tr><td><span class="gf">embed (YouTube, …)</span></td><td class="arrowcell">→</td><td>Link fallback</td><td><span class="af">&lt;Embed&gt;</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s05">
+    <h2><span class="num">05</span>Assets</h2>
+    <p>Squarespace serves images from <code>images.squarespace-cdn.com</code> with a size query (<code>?format=750w</code>, <code>?format=original</code>). Portage resolves every reference, fetches the original, and rewrites the path.</p>
+    <ul>
+      <li><strong>Strip the format query</strong> — the original is requested with <code>?format=original</code> and Astro regenerates responsive sizes.</li>
+      <li><strong>Download &amp; dedupe</strong> — assets are content-hashed; duplicates collapse to one file.</li>
+      <li><strong>Rewrite references</strong> — feature and in-body images point at local paths.</li>
+      <li><strong>External images</strong> stay remote unless <code>--images localize-external</code>.</li>
+    </ul>
+    <div class="note">
+      <span class="lbl">Placement</span>
+      <p><code>--images assets</code> (default) writes to <code>src/assets/blog/</code> for full Astro optimization. <code>--images public</code> writes stable URLs to <code>public/images/</code>.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s06">
+    <h2><span class="num">06</span>Routes &amp; redirects</h2>
+    <p>Squarespace namespaces blog posts under a collection prefix (often <code>/blog/</code>). Portage preserves the structure by default and emits a redirect map for anything that changes.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Squarespace route</th><th></th><th>Astro route</th><th>Handled by</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">/blog/&lcub;slug&rcub;</span></td><td class="arrowcell">→</td><td><span class="af">/blog/&lcub;slug&rcub;/</span></td><td>Blog collection (<code>--route-base</code>)</td></tr>
+          <tr><td><span class="gf">/&lcub;page-slug&rcub;</span></td><td class="arrowcell">→</td><td><span class="af">/&lcub;page-slug&rcub;/</span></td><td>Pages collection</td></tr>
+          <tr><td><span class="gf">/tag/&lcub;slug&rcub; · /category/&lcub;slug&rcub;</span></td><td class="arrowcell">→</td><td><span class="af">/tag/ · /category/</span></td><td>Generated taxonomy pages</td></tr>
+          <tr><td><span class="gf">?format=rss</span></td><td class="arrowcell">→</td><td><span class="af">/rss.xml</span></td><td><code>@astrojs/rss</code> + redirect</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li><strong>Slug prefix</strong> — preserved by default; flatten with <code>--route-base /</code>.</li>
+      <li><strong>Existing 301s</strong> — Squarespace's built-in URL mappings can be exported and merged into the redirect map.</li>
+      <li><strong>Trailing slashes &amp; sitemap</strong> — <code>trailingSlash: 'always'</code> and <code>@astrojs/sitemap</code> configured to the new base URL.</li>
+    </ul>
+  </section>
+
+  <section class="spec-sec" id="s07">
+    <h2><span class="num">07</span>Out of scope</h2>
+    <p>The WXR export is narrow by design, and much of Squarespace has no static equivalent. Portage migrates content and reports — explicitly — what it could not carry.</p>
+    <ul>
+      <li><strong>Commerce</strong> — products, checkout, inventory, and orders.</li>
+      <li><strong>Member areas &amp; paywalls</strong> — gated content and the auth around it.</li>
+      <li><strong>Index, portfolio, gallery, album, event &amp; audio collections</strong> — absent from the WXR; partially recoverable via crawl.</li>
+      <li><strong>Site styles</strong> — design, custom CSS, fonts, and layout (rebuilt in Astro).</li>
+      <li><strong>Forms, scheduling (Acuity), donations</strong>, and other dynamic features.</li>
+      <li><strong>Secondary blogs</strong> — only the primary blog exports.</li>
+    </ul>
+    <div class="note warn">
+      <span class="lbl">Set expectations</span>
+      <p>Treat the export as the spine and the crawl as connective tissue. Expect to hand-place a few pages the export and crawl can't fully reconstruct — Portage lists every one of them in the manifest.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s08">
+    <h2><span class="num">08</span>Edge cases</h2>
+    <ul>
+      <li><strong>Pages missing from the export</strong> — recovered from the crawl when <code>--crawl</code> is set; otherwise listed as gaps.</li>
+      <li><strong>No feature-image field</strong> — hero is derived from the first inline image; disable with <code>--hero none</code>.</li>
+      <li><strong>SEO meta absent from WXR</strong> — recovered via crawl, else left to Astro defaults.</li>
+      <li><strong>Drafts</strong> — Squarespace doesn't export unpublished posts; only published items arrive.</li>
+      <li><strong>Tags vs. categories</strong> — both arrive as <code>&lt;category&gt;</code>; split by the <code>domain</code> attribute.</li>
+      <li><strong>Inline styles &amp; <code>sqs-</code> wrappers</strong> — stripped to leave clean semantic markup.</li>
+      <li><strong>CDN size variants</strong> — collapsed to the downloaded original.</li>
+    </ul>
+  </section>
+
+  <section class="spec-sec" id="s09">
+    <h2><span class="num">09</span>Output</h2>
+    <p>A predictable, buildable Astro project, with a manifest ledger at the root.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">project tree</span><span class="meta">output</span></div>
+      <pre is:raw>astro-project/
+├── src/
+│   ├── content/
+│   │   ├── blog/             <span class="c">← 96 posts (WXR)</span>
+│   │   └── pages/            <span class="c">← 5 pages (WXR + crawl)</span>
+│   ├── assets/blog/          <span class="c">← 171 localized images</span>
+│   ├── components/portage/   <span class="c">← MDX block stubs (if --content mdx)</span>
+│   └── content.config.ts
+├── public/_redirects        <span class="c">← 18 generated redirects</span>
+├── portage.manifest.json    <span class="c">← extract / transform / load ledger</span>
+└── astro.config.mjs         <span class="c">← trailingSlash · sitemap · redirects</span></pre>
+    </div>
+    <h3>Content collection schema</h3>
+    <div class="code">
+      <div class="code-bar"><span class="name">src/content.config.ts</span><span class="meta">typescript</span></div>
+      <pre is:raw><span class="k">import</span> { defineCollection, z } <span class="k">from</span> <span class="s">'astro:content'</span>;
+<span class="k">import</span> { glob } <span class="k">from</span> <span class="s">'astro/loaders'</span>;
+
+<span class="k">const</span> blog = defineCollection({
+  loader: glob({ pattern: <span class="s">'**/*.{md,mdx}'</span>, base: <span class="s">'./src/content/blog'</span> }),
+  schema: ({ image }) => z.object({
+    title: z.string(),
+    description: z.string(),
+    pubDate: z.coerce.date(),
+    heroImage: image().optional(),
+    tags: z.array(z.string()).default([]),
+    categories: z.array(z.string()).default([]),
+    authors: z.array(z.string()).default([]),
+    draft: z.boolean().default(false),
+    seo: z.object({ title: z.string().optional(), description: z.string().optional() }).optional(),
+  }),
+});
+
+<span class="k">export const</span> collections = { blog };</pre>
+    </div>
+    <h3>Sample migrated post</h3>
+    <div class="code">
+      <div class="code-bar"><span class="name">src/content/blog/harbor-notes.md</span><span class="meta">markdown</span></div>
+      <pre is:raw><span class="t">---</span>
+<span class="k">title:</span> <span class="s">"Harbor Notes, Week One"</span>
+<span class="k">description:</span> <span class="s">"First impressions after leaving the builder."</span>
+<span class="k">pubDate:</span> 2025-09-30
+<span class="k">heroImage:</span> ../../assets/blog/harbor-notes.jpg
+<span class="k">tags:</span> [<span class="s">"field-notes"</span>]
+<span class="k">categories:</span> [<span class="s">"Journal"</span>]
+<span class="k">authors:</span> [<span class="s">"Dana Reyes"</span>]
+<span class="t">---</span>
+
+The chart table is clearer than the dashboard ever was…</pre>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s10">
+    <h2><span class="num">10</span>CLI</h2>
+    <p>Three stages, run in order. Add <code>--crawl</code> at extract time to fill the export's gaps.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">portage · squarespace → astro</span><span class="meta">bash</span></div>
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> squarespace <span class="fl">--export</span> ./export.xml <span class="fl">--crawl</span> $URL <span class="fl">--to</span> ./astro-project
+<span class="pr">$</span> npx portage transform <span class="fl">--schema</span> content-collections <span class="fl">--content</span> mdx
+<span class="pr">$</span> npx portage load <span class="fl">--images</span> assets <span class="fl">--redirects</span> netlify</pre>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Values</th><th>Default</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">--export</span></td><td><span class="ty">path</span></td><td>—</td><td>WordPress XML (WXR) file. Required.</td></tr>
+          <tr><td><span class="gf">--crawl</span></td><td><span class="ty">url</span></td><td>—</td><td>Recover pages &amp; SEO the WXR omits.</td></tr>
+          <tr><td><span class="gf">--route-base</span></td><td><span class="ty">string</span></td><td><span class="ty">/blog</span></td><td>Preserve or flatten the blog prefix.</td></tr>
+          <tr><td><span class="gf">--hero</span></td><td><span class="ty">first-image · none</span></td><td><span class="ty">first-image</span></td><td>How heroImage is derived.</td></tr>
+          <tr><td><span class="gf">--content</span></td><td><span class="ty">markdown · mdx</span></td><td><span class="ty">markdown</span></td><td>Body format &amp; block handling.</td></tr>
+          <tr><td><span class="gf">--images</span></td><td><span class="ty">assets · public · localize-external</span></td><td><span class="ty">assets</span></td><td>Image placement.</td></tr>
+          <tr><td><span class="gf">--dry-run</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Plan &amp; diff only.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s11">
+    <h2><span class="num">11</span>Verification</h2>
+    <p>Every crossing is auditable. The dry-run reconciles the export against the crawl so you can see exactly what each source contributed.</p>
+    <ul>
+      <li><strong>Dry-run first</strong> — <code>--dry-run</code> prints the plan and a diff; nothing is written.</li>
+      <li><strong>Source attribution</strong> — the manifest records whether each entry came from the WXR, the crawl, or both.</li>
+      <li><strong>Counted on, counted off</strong> — gaps (export-only collections, missing SEO) are listed explicitly, never hidden.</li>
+    </ul>
+    <div class="code">
+      <div class="code-bar"><span class="name">portage load --dry-run</span><span class="meta">bash</span></div>
+      <pre is:raw><span class="pr">$</span> npx portage load <span class="fl">--dry-run</span>
+<span class="out">→ 96 posts (wxr) → 96 files     ✓ reconciled</span>
+<span class="out">→ 5 pages (wxr+crawl) → 5 files ✓</span>
+<span class="out">→ 204 images → 171 unique       ✓ deduped</span>
+<span class="out">→ 18 redirects mapped           ✓</span>
+<span class="out">→ 2 gallery collections         ⚠ not in export — crawl or hand-place</span></pre>
+    </div>
+  </section>
+</SpecLayout>

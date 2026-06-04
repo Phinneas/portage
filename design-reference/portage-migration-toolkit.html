@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portage — Carry your site across. Intact.</title>
+<meta name="description" content="Migration tools for Webflow, Squarespace, WordPress, Ghost, Wix, and Shopify to Astro. Content, assets, routes, and metadata. No lock-in. No data loss. An infrastructure product of Salish Sea Consulting.">
+<script>document.documentElement.className='js';</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Outfit:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#FCEBD5;
+  --bg-deep:#F4DCC0;
+  --surface:#FFFBF4;
+  --surface-2:#F7E6CE;
+  --line:#EBDCC2;
+  --line-soft:#F3E5D0;
+  --cyan:#2E6E88;
+  --cyan-bright:#1F6182;
+  --amber:#8E6F3B;
+  --amber-bright:#7C6132;
+  --copper:#4E7C57;
+  --copper-bright:#3F6E4A;
+  --text:#1F2127;
+  --text-dim:#5A5C5A;
+  --text-faint:#857F73;
+  --grid-line:rgba(110,84,44,0.055);
+  --mono:'Space Mono',ui-monospace,monospace;
+  --sans:'Outfit',system-ui,sans-serif;
+  --head:'Space Grotesk',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html{-webkit-text-size-adjust:100%;}
+@media (prefers-reduced-motion: no-preference){html{scroll-behavior:smooth;}}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--sans);
+  font-weight:400;
+  font-size:17px;
+  line-height:1.65;
+  overflow-x:hidden;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+body::before{
+  content:'';
+  position:fixed;
+  inset:0;
+  z-index:0;
+  pointer-events:none;
+  background-image:linear-gradient(var(--grid-line) 1px,transparent 1px),linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);
+  background-size:74px 74px;
+}
+a{color:inherit;text-decoration:none;}
+h1,h2,h3,h4{font-family:var(--head);font-weight:500;letter-spacing:-0.01em;line-height:1.08;}
+.wrap{max-width:1180px;margin:0 auto;padding:0 40px;position:relative;z-index:1;}
+section{position:relative;z-index:1;scroll-margin-top:88px;}
+
+/* ---- kicker / section heads ---- */
+.kicker{
+  font-family:var(--mono);
+  font-size:12px;
+  letter-spacing:0.2em;
+  text-transform:uppercase;
+  color:var(--cyan);
+  display:inline-flex;
+  align-items:center;
+  gap:9px;
+}
+.sec{padding:118px 0;}
+.sec-head{max-width:660px;margin-bottom:60px;}
+.sec-head h2{font-size:clamp(30px,4.4vw,46px);margin:18px 0 0;color:var(--text);}
+.sec-note{color:var(--text-dim);font-size:18px;margin-top:20px;max-width:560px;}
+
+/* ---- nav ---- */
+.nav{
+  position:sticky;top:0;z-index:50;
+  background:rgba(252,235,213,0.92);
+  border-bottom:1px solid var(--line);
+}
+.nav-inner{
+  max-width:1180px;margin:0 auto;padding:0 40px;
+  height:66px;display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap;
+}
+.brand{display:flex;align-items:baseline;gap:11px;}
+.brand-mark{font-family:var(--head);font-weight:700;font-size:20px;letter-spacing:0.02em;color:var(--text);}
+.brand-mark .sl{color:var(--cyan);}
+.brand-word{font-family:var(--head);font-weight:500;font-size:18px;color:var(--text);letter-spacing:0.01em;}
+.nav-links{display:flex;align-items:center;gap:30px;}
+.nav-links a{
+  font-family:var(--mono);font-size:13px;letter-spacing:0.06em;color:var(--text-dim);
+  transition:color .22s ease;position:relative;
+}
+.nav-links a:hover{color:var(--cyan-bright);}
+.nav-links a::after{
+  content:'';position:absolute;left:0;bottom:-7px;height:1px;width:0;background:var(--cyan);transition:width .25s ease;
+}
+.nav-links a:hover::after{width:100%;}
+
+/* ---- buttons ---- */
+.btn{
+  font-family:var(--head);font-weight:500;font-size:15px;letter-spacing:0.01em;
+  display:inline-flex;align-items:center;gap:10px;
+  padding:14px 24px;border-radius:2px;cursor:pointer;
+  transition:background .22s ease,border-color .22s ease,color .22s ease,transform .22s ease;
+  border:1px solid transparent;
+}
+.btn .arr{font-family:var(--mono);font-size:15px;transition:transform .22s ease;}
+.btn:hover .arr{transform:translateX(3px);}
+.btn-primary{background:var(--cyan);color:#F7FAFB;border-color:var(--cyan);}
+.btn-primary:hover{background:var(--cyan-bright);border-color:var(--cyan-bright);}
+.btn-ghost{background:transparent;color:var(--text);border-color:var(--line);}
+.btn-ghost:hover{border-color:var(--cyan);color:var(--cyan-bright);}
+
+/* ---- hero ---- */
+.hero{position:relative;overflow:hidden;padding:78px 0 116px;}
+.hero-grid{display:grid;grid-template-columns:minmax(0,640px) 1fr;gap:40px;align-items:center;min-height:520px;}
+.hero-copy{position:relative;z-index:3;}
+.hero h1{font-size:clamp(40px,6.6vw,74px);font-weight:500;letter-spacing:-0.025em;line-height:1.0;margin:26px 0 0;}
+.hero h1 .intact{color:var(--cyan-bright);}
+.hero-sub{color:var(--text-dim);font-size:clamp(17px,1.5vw,20px);line-height:1.6;margin:30px 0 0;max-width:545px;}
+.hero-sub .arrow{color:var(--amber);font-family:var(--mono);}
+.hero-sub .nowrap{color:var(--text);white-space:nowrap;}
+.cta-row{display:flex;flex-wrap:wrap;gap:14px;margin-top:40px;}
+.readout{display:flex;flex-wrap:wrap;gap:40px;margin-top:54px;padding-top:30px;border-top:1px solid var(--line-soft);max-width:600px;}
+.stat .v{font-family:var(--head);font-size:26px;font-weight:500;color:var(--text);letter-spacing:0.01em;display:block;}
+.stat .v.copper{color:var(--copper-bright);}
+.stat .v.amber{color:var(--amber);}
+.stat .l{font-family:var(--mono);font-size:10.5px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);margin-top:7px;display:block;}
+
+/* hydrographic chart visual */
+.hydro{position:absolute;right:-150px;top:50%;transform:translateY(-50%);width:780px;height:780px;z-index:1;pointer-events:none;}
+.hydro use{fill:none;stroke:var(--cyan);stroke-width:1.2;}
+.hydro .sounding{font-family:var(--mono);font-size:13px;fill:var(--amber);opacity:0.55;}
+.hydro .reticle{stroke:var(--text-faint);stroke-width:1;opacity:0.7;}
+.hydro .compass{font-family:var(--mono);font-size:12px;fill:var(--text-faint);letter-spacing:0.1em;}
+.route-trace{fill:none;stroke:var(--cyan-bright);stroke-width:1.5;stroke-dasharray:2 7;stroke-linecap:round;opacity:0.85;}
+.route-node{fill:var(--bg);stroke:var(--cyan-bright);stroke-width:1.5;}
+.route-dest{fill:none;stroke:var(--amber);stroke-width:1.5;}
+.route-label{font-family:var(--mono);font-size:12px;letter-spacing:0.14em;fill:var(--amber);opacity:0.85;}
+@media (prefers-reduced-motion: no-preference){
+  .hydro{animation:drift 24s ease-in-out infinite alternate;}
+  .route-trace{animation:bearing 30s linear infinite;}
+}
+@keyframes drift{from{transform:translateY(-50%);}to{transform:translateY(calc(-50% - 14px));}}
+@keyframes bearing{from{stroke-dashoffset:0;}to{stroke-dashoffset:-180;}}
+
+/* ---- reveal motion ---- */
+.js .reveal{opacity:0;transform:translateY(16px);transition:opacity 1.05s cubic-bezier(.22,.61,.27,1),transform 1.05s cubic-bezier(.22,.61,.27,1);}
+.js .reveal.in{opacity:1;transform:none;}
+.js .group .gi{opacity:0;transform:translateY(16px);transition:opacity .9s cubic-bezier(.22,.61,.27,1),transform .9s cubic-bezier(.22,.61,.27,1);}
+.js .group.in .gi{opacity:1;transform:none;}
+.js .group.in .gi:nth-child(2){transition-delay:.06s;}
+.js .group.in .gi:nth-child(3){transition-delay:.12s;}
+.js .group.in .gi:nth-child(4){transition-delay:.18s;}
+.js .group.in .gi:nth-child(5){transition-delay:.24s;}
+.js .group.in .gi:nth-child(6){transition-delay:.30s;}
+.js .group.in .gi:nth-child(7){transition-delay:.36s;}
+.js .group.in .gi:nth-child(8){transition-delay:.42s;}
+
+/* ---- routes board ---- */
+.board{border-top:1px solid var(--line);}
+.board-head,.board-row{display:grid;grid-template-columns:1.6fr 0.85fr 2.2fr 0.85fr;gap:24px;align-items:center;}
+.board-head{padding:14px 16px;border-bottom:1px solid var(--line);}
+.board-head span{font-family:var(--mono);font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);}
+.board-head .ta-r,.r-spec{text-align:right;}
+.board-row{padding:22px 16px;border-bottom:1px solid var(--line-soft);position:relative;transition:background .25s ease;}
+.board-row::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--cyan);transform:scaleY(0);transform-origin:top;transition:transform .25s ease;}
+.board-row:hover{background:var(--surface-2);}
+.board-row:hover::before{transform:scaleY(1);}
+.r-route{font-family:var(--mono);font-size:16px;letter-spacing:0.01em;display:flex;align-items:center;gap:11px;flex-wrap:wrap;}
+.r-route .origin{color:var(--text);}
+.r-route .arr{color:var(--amber);}
+.r-route .dest{color:var(--cyan-bright);}
+.r-route .sub{color:var(--text-faint);font-size:12px;}
+.r-status{font-family:var(--mono);font-size:12px;letter-spacing:0.1em;text-transform:uppercase;display:flex;align-items:center;gap:9px;color:var(--text-dim);}
+.r-status .dot{width:7px;height:7px;border-radius:50%;flex:none;}
+.r-status.active .dot{background:var(--copper-bright);box-shadow:0 0 0 3px rgba(63,110,74,0.16);}
+.r-status.active{color:var(--copper-bright);}
+.r-status.beta .dot{background:var(--amber);box-shadow:0 0 0 3px rgba(142,111,59,0.16);}
+.r-status.beta{color:var(--amber);}
+.r-status.planned .dot{background:transparent;border:1px solid var(--text-faint);box-shadow:none;}
+.r-status.planned{color:var(--text-faint);}
+.r-note{color:var(--text-dim);font-size:15px;line-height:1.5;}
+.r-spec a{font-family:var(--mono);font-size:13px;color:var(--cyan);transition:color .2s ease;white-space:nowrap;}
+.r-spec a:hover{color:var(--cyan-bright);}
+
+/* ---- manifest / integrity grids ---- */
+.cols4{display:grid;grid-template-columns:repeat(4,1fr);}
+.col-item{padding:6px 30px;border-left:1px solid var(--line-soft);}
+.col-item:first-child{border-left:none;padding-left:0;}
+.man-ico{width:30px;height:30px;fill:none;stroke-width:1.4;margin-bottom:20px;display:block;}
+.man-ico.cy{stroke:var(--cyan);}
+.man-ico.am{stroke:var(--amber);}
+.col-item h3{font-size:21px;color:var(--text);margin:0 0 12px;}
+.col-item p{color:var(--text-dim);font-size:15px;line-height:1.58;}
+.col-idx{font-family:var(--mono);font-size:12px;letter-spacing:0.14em;color:var(--cyan);display:block;margin-bottom:16px;}
+
+/* ---- procedure / steps ---- */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:34px;margin-bottom:56px;}
+.step{border-top:1px solid var(--line);padding-top:28px;position:relative;}
+.step::before{content:'';position:absolute;top:-1px;left:0;width:44px;height:2px;background:var(--cyan);}
+.step .idx{font-family:var(--head);font-size:40px;font-weight:500;color:var(--amber);line-height:1;}
+.step h3{font-size:23px;color:var(--text);margin:14px 0 12px;}
+.step p{color:var(--text-dim);font-size:15px;line-height:1.58;}
+
+/* ---- cli block ---- */
+.cli{background:#12151A;border:1px solid #23272E;border-radius:6px;overflow:hidden;box-shadow:0 20px 44px -26px rgba(20,32,48,0.40);}
+.cli-bar{display:flex;justify-content:space-between;align-items:center;padding:11px 18px;border-bottom:1px solid #23272E;background:#0D0F13;}
+.cli-bar .name{font-family:var(--mono);font-size:12px;letter-spacing:0.12em;color:#AEB6C2;}
+.cli-bar .meta{font-family:var(--mono);font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#6B7480;}
+.cli-body{font-family:var(--mono);font-size:14px;line-height:1.95;padding:22px 22px;overflow-x:auto;white-space:pre;color:#E8E4DF;}
+.cli-body .pr{color:#7FB0C6;user-select:none;}
+.cli-body .fl{color:#CBAE7E;}
+.cli-body .out{color:#737C86;}
+
+/* ---- integrity band ---- */
+.band{background:var(--bg-deep);border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);}
+
+/* ---- parent / builder plate ---- */
+.parent-grid{display:grid;grid-template-columns:1.3fr 0.9fr;gap:56px;align-items:center;}
+.parent-copy h2{font-size:clamp(26px,3.4vw,38px);color:var(--text);margin:18px 0 0;}
+.parent-copy p{color:var(--text-dim);font-size:17px;margin-top:20px;max-width:480px;}
+.plate{border:1px solid var(--amber);background:linear-gradient(180deg,rgba(142,111,59,0.08),rgba(142,111,59,0.02));border-radius:3px;padding:30px 32px;}
+.plate .pl-row{display:flex;justify-content:space-between;gap:20px;font-family:var(--mono);font-size:13px;letter-spacing:0.08em;padding:11px 0;border-bottom:1px solid rgba(142,111,59,0.22);}
+.plate .pl-row:last-child{border-bottom:none;}
+.plate .pl-k{color:var(--text-faint);text-transform:uppercase;font-size:11px;letter-spacing:0.14em;}
+.plate .pl-v{color:var(--amber-bright);text-align:right;}
+.plate .pl-title{font-family:var(--head);font-weight:600;font-size:15px;letter-spacing:0.18em;color:var(--amber);text-transform:uppercase;padding-bottom:16px;margin-bottom:6px;border-bottom:1px solid rgba(142,111,59,0.34);}
+
+/* ---- final cta ---- */
+.castoff{position:relative;overflow:hidden;}
+.castoff-inner{max-width:720px;}
+.castoff h2{font-size:clamp(32px,5vw,56px);color:var(--text);margin:22px 0 0;letter-spacing:-0.02em;}
+.castoff p{color:var(--text-dim);font-size:19px;margin-top:24px;max-width:560px;}
+.install{display:inline-flex;align-items:center;gap:12px;margin-top:34px;padding:13px 20px;border:1px solid #23272E;border-radius:6px;background:#12151A;font-family:var(--mono);font-size:14px;color:#E8E4DF;}
+.install .pr{color:#7FB0C6;}
+.install .cp{color:#737C86;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;border-left:1px solid #2A2F37;padding-left:12px;cursor:pointer;}
+.castoff .cta-row{margin-top:34px;}
+
+/* ---- footer ---- */
+.foot{border-top:1px solid var(--line);padding:72px 0 40px;}
+.foot-top{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:36px;margin-bottom:54px;}
+.foot-brand .brand{margin-bottom:16px;}
+.foot-brand p{color:var(--text-faint);font-size:14px;max-width:260px;line-height:1.6;}
+.foot-col h4{font-family:var(--mono);font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);margin-bottom:18px;font-weight:400;}
+.foot-col a{display:block;color:var(--text-dim);font-size:15px;padding:7px 0;transition:color .2s ease;}
+.foot-col a:hover{color:var(--cyan-bright);}
+.foot-bar{display:flex;flex-wrap:wrap;gap:18px 28px;justify-content:space-between;align-items:center;padding-top:28px;border-top:1px solid var(--line-soft);}
+.foot-bar span{font-family:var(--mono);font-size:12px;letter-spacing:0.08em;color:var(--text-faint);}
+.foot-meta{display:flex;flex-wrap:wrap;gap:22px;}
+
+@media (prefers-reduced-motion: reduce){
+  .js .reveal,.js .group .gi{opacity:1!important;transform:none!important;transition:none!important;}
+  .hydro,.route-trace{animation:none!important;}
+}
+
+/* ---- responsive ---- */
+@media (max-width:900px){
+  .wrap{padding:0 28px;}
+  .nav-inner{padding:0 28px;}
+  .hero-grid{grid-template-columns:1fr;min-height:auto;}
+  .hydro{opacity:0.4;right:-220px;width:620px;height:620px;}
+  .sec{padding:84px 0;}
+  .cols4{grid-template-columns:1fr 1fr;}
+  .col-item{border-left:none;border-top:1px solid var(--line-soft);padding:26px 0 0;}
+  .col-item:nth-child(odd){padding-right:26px;}
+  .col-item:nth-child(even){padding-left:26px;border-left:1px solid var(--line-soft);}
+  .steps{grid-template-columns:1fr;gap:0;}
+  .step{margin-top:0;}
+  .step:not(:first-child){margin-top:30px;}
+  .parent-grid{grid-template-columns:1fr;gap:38px;}
+  .foot-top{grid-template-columns:1fr 1fr;gap:36px 24px;}
+  .foot-brand{grid-column:1 / -1;}
+}
+@media (max-width:640px){
+  .board-head{display:none;}
+  .board-row{grid-template-columns:1fr;gap:12px;padding:24px 14px;}
+  .r-spec{text-align:left;}
+  .board-row > span[data-l]::before{content:attr(data-l);display:block;font-family:var(--mono);font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);margin-bottom:6px;}
+}
+@media (max-width:600px){
+  body{font-size:16px;}
+  .nav-links{gap:16px;}
+  .nav-links a{font-size:12px;}
+  .hydro{display:none;}
+  .readout{gap:26px;}
+  .sec{padding:70px 0;}
+  .sec-head{margin-bottom:42px;}
+  .cols4{grid-template-columns:1fr;}
+  .col-item,.col-item:nth-child(odd),.col-item:nth-child(even){padding:26px 0 0;border-left:none;}
+  .foot-top{grid-template-columns:1fr 1fr;}
+  .btn{flex:1 1 auto;justify-content:center;}
+}
+</style>
+<style>
+.ha-img-placeholder{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;background:#f4f4f5;border:1px dashed #d4d4d8;border-radius:8px;color:#71717a;font-size:12px;font-family:system-ui,sans-serif;min-height:80px;padding:16px;box-sizing:border-box;animation:ha-img-pulse 1.5s ease-in-out infinite}
+.ha-img-placeholder.ha-failed{animation:none;opacity:.7}
+@keyframes ha-img-pulse{0%,100%{opacity:1}50%{opacity:.5}}
+@media(prefers-color-scheme:dark){.ha-img-placeholder{background:#27272a;border-color:#3f3f46;color:#a1a1aa}}
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a href="#top" class="brand" aria-label="Portage home">
+      <span class="brand-mark">P<span class="sl">//</span></span>
+      <span class="brand-word">Portage</span>
+    </a>
+    <nav class="nav-links">
+      <a href="#routes">Routes</a>
+      <a href="#manifest">Manifest</a>
+      <a href="#docs">Docs</a>
+      <a href="#">GitHub</a>
+      <a href="#contact">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+<section class="hero" aria-label="Introduction">
+  <svg class="hydro" viewBox="0 0 780 780" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+    <defs>
+      <path id="contour" d="M -96,-46 C -60,-98 46,-102 88,-58 C 128,-18 100,60 42,86 C -14,108 -92,72 -106,16 C -118,-14 -122,-18 -96,-46 Z"/>
+    </defs>
+    <g transform="translate(452 372)">
+      <use href="#contour" transform="scale(0.60)" stroke-opacity="0.42"/>
+      <use href="#contour" transform="scale(0.90)" stroke-opacity="0.32"/>
+      <use href="#contour" transform="scale(1.22)" stroke-opacity="0.24"/>
+      <use href="#contour" transform="scale(1.56)" stroke-opacity="0.17"/>
+      <use href="#contour" transform="scale(1.94)" stroke-opacity="0.11"/>
+      <use href="#contour" transform="scale(2.36)" stroke-opacity="0.07"/>
+    </g>
+    <text class="sounding" x="180" y="250">18</text>
+    <text class="sounding" x="270" y="588">24</text>
+    <text class="sounding" x="592" y="196">9</text>
+    <text class="sounding" x="650" y="318">6</text>
+    <text class="sounding" x="356" y="214">31</text>
+    <text class="sounding" x="540" y="556">12</text>
+    <text class="sounding" x="690" y="492">14</text>
+    <text class="sounding" x="232" y="436">22</text>
+    <g class="reticle">
+      <line x1="442" y1="356" x2="462" y2="356"/>
+      <line x1="452" y1="346" x2="452" y2="366"/>
+    </g>
+    <text class="compass" x="708" y="92">N</text>
+    <line class="reticle" x1="714" y1="100" x2="714" y2="124"/>
+    <path class="route-trace" d="M 150,612 C 268,548 312,476 452,372"/>
+    <circle class="route-node" cx="150" cy="612" r="5"/>
+    <circle class="route-dest" cx="452" cy="372" r="8"/>
+    <text class="route-label" x="468" y="358">ASTRO</text>
+  </svg>
+  <div class="wrap">
+    <div class="hero-grid">
+      <div class="hero-copy">
+        <span class="kicker reveal">// Migration toolkit — Astro</span>
+        <h1 class="reveal">Carry your site<br>across. <span class="intact">Intact.</span></h1>
+        <p class="hero-sub reveal">Migration tools for Ghost, Squarespace, Substack, Webflow, and WordPress <span class="arrow">→</span> Astro. Content, assets, routes, and metadata. <span class="nowrap">No lock-in. No data loss.</span></p>
+        <div class="cta-row reveal">
+          <a href="#routes" class="btn btn-primary">View the Routes <span class="arr">→</span></a>
+          <a href="#manifest" class="btn btn-ghost">Read the Manifest</a>
+        </div>
+        <div class="readout group">
+          <div class="stat gi"><span class="v">05</span><span class="l">Charted routes</span></div>
+          <div class="stat gi"><span class="v amber">100%</span><span class="l">Metadata preserved</span></div>
+          <div class="stat gi"><span class="v copper">0</span><span class="l">Vendor lock-in</span></div>
+          <div class="stat gi"><span class="v">MIT</span><span class="l">Open license</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="routes" aria-label="Supported migrations">
+  <div class="wrap">
+    <div class="sec-head group">
+      <span class="kicker gi">// Supported migrations</span>
+      <h2 class="gi">The Routes</h2>
+      <p class="sec-note gi">Each route is a tested crossing — an origin platform to Astro, and the cargo that moves intact. Specs list every field, transform, and known edge.</p>
+    </div>
+    <div class="board group" role="table">
+      <div class="board-head" role="row">
+        <span>Route</span><span>Status</span><span>Transfers</span><span class="ta-r">Spec</span>
+      </div>
+      <div class="board-row gi" role="row">
+        <span class="r-route" data-l="Route" role="cell"><span class="origin">Ghost</span><span class="arr">→</span><span class="dest">Astro</span></span>
+        <span class="r-status active" data-l="Status" role="cell"><span class="dot"></span>Active</span>
+        <span class="r-note" data-l="Transfers" role="cell">Posts, tags, authors, images, and route slugs</span>
+        <span class="r-spec" data-l="Spec" role="cell"><a href="#">View Spec →</a></span>
+      </div>
+      <div class="board-row gi" role="row">
+        <span class="r-route" data-l="Route" role="cell"><span class="origin">Squarespace</span><span class="arr">→</span><span class="dest">Astro</span></span>
+        <span class="r-status beta" data-l="Status" role="cell"><span class="dot"></span>Beta</span>
+        <span class="r-note" data-l="Transfers" role="cell">Pages, blog posts, images, and redirect maps. XML export.</span>
+        <span class="r-spec" data-l="Spec" role="cell"><a href="#">View Spec →</a></span>
+      </div>
+      <div class="board-row gi" role="row">
+        <span class="r-route" data-l="Route" role="cell"><span class="origin">Substack</span><span class="arr">→</span><span class="dest">Astro</span></span>
+        <span class="r-status beta" data-l="Status" role="cell"><span class="dot"></span>Beta</span>
+        <span class="r-note" data-l="Transfers" role="cell">Newsletter archive, posts, images, and canonical URLs</span>
+        <span class="r-spec" data-l="Spec" role="cell"><a href="#">View Spec →</a></span>
+      </div>
+      <div class="board-row gi" role="row">
+        <span class="r-route" data-l="Route" role="cell"><span class="origin">Webflow</span><span class="arr">→</span><span class="dest">Astro</span></span>
+        <span class="r-status planned" data-l="Status" role="cell"><span class="dot"></span>Planned</span>
+        <span class="r-note" data-l="Transfers" role="cell">Content, assets, routes, and CMS collections via API</span>
+        <span class="r-spec" data-l="Spec" role="cell"><a href="#">View Spec →</a></span>
+      </div>
+      <div class="board-row gi" role="row">
+        <span class="r-route" data-l="Route" role="cell"><span class="origin">WordPress</span><span class="arr">→</span><span class="dest">Astro</span></span>
+        <span class="r-status planned" data-l="Status" role="cell"><span class="dot"></span>Planned</span>
+        <span class="r-note" data-l="Transfers" role="cell">Posts, pages, media, taxonomies, and SEO metadata</span>
+        <span class="r-spec" data-l="Spec" role="cell"><a href="#">View Spec →</a></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="manifest" aria-label="What Portage handles">
+  <div class="wrap">
+    <div class="sec-head group">
+      <span class="kicker gi">// What Portage handles</span>
+      <h2 class="gi">The Manifest</h2>
+      <p class="sec-note gi">A full accounting of what comes aboard. Four holds, nothing stowed loose.</p>
+    </div>
+    <div class="cols4 group">
+      <div class="col-item gi">
+        <svg class="man-ico cy" viewBox="0 0 32 32" aria-hidden="true"><path d="M9 5h10l4 4v18H9z"/><path d="M19 5v4h4"/><path d="M13 14h6M13 18h6M13 22h4"/></svg>
+        <h3>Content</h3>
+        <p>Posts, pages, collections, and CMS schemas. Mapped to Astro content collections or headless CMS structures.</p>
+      </div>
+      <div class="col-item gi">
+        <svg class="man-ico am" viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="8" width="22" height="16" rx="1"/><circle cx="12" cy="14" r="2"/><path d="M5 21l6-5 5 4 4-3 7 5"/></svg>
+        <h3>Assets</h3>
+        <p>Images, files, and media. URLs rewritten. Optimized for Astro's asset pipeline.</p>
+      </div>
+      <div class="col-item gi">
+        <svg class="man-ico cy" viewBox="0 0 32 32" aria-hidden="true"><circle cx="8" cy="8" r="2.5"/><circle cx="24" cy="24" r="2.5"/><path d="M8 11v7a3 3 0 0 0 3 3h10"/></svg>
+        <h3>Routes</h3>
+        <p>URL structures, slugs, and redirect maps. Your SEO equity moves with you.</p>
+      </div>
+      <div class="col-item gi">
+        <svg class="man-ico am" viewBox="0 0 32 32" aria-hidden="true"><path d="M6 7h10l10 9-10 9H6z"/><circle cx="12" cy="13" r="1.7"/></svg>
+        <h3>Metadata</h3>
+        <p>Titles, descriptions, Open Graph, alt text, publish dates. Nothing discarded.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="docs" aria-label="How Portage works">
+  <div class="wrap">
+    <div class="sec-head group">
+      <span class="kicker gi">// Procedure</span>
+      <h2 class="gi">How Portage Works</h2>
+      <p class="sec-note gi">Three stages. Extract, transform, load. Each is inspectable, each is reversible, and nothing is written until the last.</p>
+    </div>
+    <div class="steps group">
+      <div class="step gi">
+        <div class="idx">01</div>
+        <h3>Extract</h3>
+        <p>Connect to source. Pull content, assets, and structure via API or export file.</p>
+      </div>
+      <div class="step gi">
+        <div class="idx">02</div>
+        <h3>Transform</h3>
+        <p>Normalize schemas. Map to Astro content collections or your target headless CMS. Generate type-safe data layers.</p>
+      </div>
+      <div class="step gi">
+        <div class="idx">03</div>
+        <h3>Load</h3>
+        <p>Write to Astro project. Output clean Markdown, MDX, or JSON. Asset references rewritten. Redirects generated.</p>
+      </div>
+    </div>
+    <div class="cli reveal">
+      <div class="cli-bar">
+        <span class="name">portage · cli</span>
+        <span class="meta">bash</span>
+      </div>
+<pre class="cli-body"><span class="pr">$</span> npx portage extract <span class="fl">--from</span> ghost <span class="fl">--to</span> ./astro-project
+<span class="out">  → 142 entries · 318 assets · 12 collections</span>
+<span class="pr">$</span> npx portage transform <span class="fl">--schema</span> content-collections
+<span class="out">  → schemas normalized · type-safe layer generated</span>
+<span class="pr">$</span> npx portage load <span class="fl">--assets</span> ./public
+<span class="out">  → markdown written · 47 redirects mapped · done</span></pre>
+    </div>
+  </div>
+</section>
+
+<section class="sec band" id="integrity" aria-label="Integrity">
+  <div class="wrap">
+    <div class="sec-head group">
+      <span class="kicker gi">// Integrity</span>
+      <h2 class="gi">Nothing is left on the dock.</h2>
+      <p class="sec-note gi">Portage treats your content as cargo with a manifest. Every item is counted on, and counted off.</p>
+    </div>
+    <div class="cols4 group">
+      <div class="col-item gi">
+        <span class="col-idx">01</span>
+        <h3>No data loss</h3>
+        <p>Every field in the manifest is checksummed on extract and verified on load. Mismatches halt the crossing.</p>
+      </div>
+      <div class="col-item gi">
+        <span class="col-idx">02</span>
+        <h3>No lock-in</h3>
+        <p>Output is plain Markdown, MDX, or JSON in your repository. Portage leaves no runtime behind.</p>
+      </div>
+      <div class="col-item gi">
+        <span class="col-idx">03</span>
+        <h3>Reversible</h3>
+        <p>Dry-run by default. Full diffs before anything is written. Nothing is overwritten without confirmation.</p>
+      </div>
+      <div class="col-item gi">
+        <span class="col-idx">04</span>
+        <h3>Inspectable</h3>
+        <p>Every transform is logged. The manifest is a file you can read, diff, and commit alongside your code.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="contact" aria-label="Salish Sea Consulting">
+  <div class="wrap">
+    <div class="parent-grid">
+      <div class="parent-copy reveal">
+        <span class="kicker">// Operated by</span>
+        <h2>An infrastructure product of Salish Sea Consulting.</h2>
+        <p>A small studio building migration and content tooling for teams leaving page-builders behind. We maintain Portage in the open, on the same schedule we'd want for our own crossings.</p>
+        <div class="cta-row" style="margin-top:30px;">
+          <a href="#" class="btn btn-ghost">Get in touch <span class="arr">→</span></a>
+        </div>
+      </div>
+      <div class="plate reveal" aria-label="Builder's plate">
+        <div class="pl-title">Salish Sea Consulting</div>
+        <div class="pl-row"><span class="pl-k">Established</span><span class="pl-v">2021 · Victoria, BC</span></div>
+        <div class="pl-row"><span class="pl-k">Bearing</span><span class="pl-v">48.4284° N · 123.3656° W</span></div>
+        <div class="pl-row"><span class="pl-k">Build</span><span class="pl-v">portage v0.9.2</span></div>
+        <div class="pl-row"><span class="pl-k">License</span><span class="pl-v">MIT · open source</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec band castoff" aria-label="Get started">
+  <svg class="hydro" viewBox="0 0 780 780" aria-hidden="true" preserveAspectRatio="xMidYMid meet" style="left:-200px;right:auto;opacity:0.5;">
+    <g transform="translate(300 372)">
+      <use href="#contour" transform="scale(0.62)" stroke-opacity="0.34"/>
+      <use href="#contour" transform="scale(0.96)" stroke-opacity="0.24"/>
+      <use href="#contour" transform="scale(1.34)" stroke-opacity="0.15"/>
+      <use href="#contour" transform="scale(1.78)" stroke-opacity="0.09"/>
+    </g>
+  </svg>
+  <div class="wrap">
+    <div class="castoff-inner reveal">
+      <span class="kicker">// Cast off</span>
+      <h2>Carry it across.</h2>
+      <p>Read the route specs, or pull the toolkit and run your first extract as a dry-run. Nothing is written until you say so.</p>
+      <div class="install"><span><span class="pr">$</span> npx portage@latest</span><span class="cp">copy</span></div>
+      <div class="cta-row">
+        <a href="#docs" class="btn btn-primary">Read the Docs <span class="arr">→</span></a>
+        <a href="#" class="btn btn-ghost">View on GitHub</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="foot" aria-label="Site footer">
+  <div class="wrap">
+    <div class="foot-top">
+      <div class="foot-brand">
+        <a href="#top" class="brand">
+          <span class="brand-mark">P<span class="sl">//</span></span>
+          <span class="brand-word">Portage</span>
+        </a>
+        <p>Carry your content across. Intact. A Salish Sea Consulting project.</p>
+      </div>
+      <div class="foot-col">
+        <h4>Product</h4>
+        <a href="#routes">Routes</a>
+        <a href="#manifest">Manifest</a>
+        <a href="#docs">How it works</a>
+      </div>
+      <div class="foot-col">
+        <h4>Resources</h4>
+        <a href="#">Docs</a>
+        <a href="#">Route specs</a>
+        <a href="#">Changelog</a>
+      </div>
+      <div class="foot-col">
+        <h4>Project</h4>
+        <a href="#">GitHub</a>
+        <a href="#">License — MIT</a>
+        <a href="#contact">Contact</a>
+      </div>
+    </div>
+    <div class="foot-bar">
+      <span>© 2026 Salish Sea Consulting</span>
+      <div class="foot-meta">
+        <span>48.4284° N · 123.3656° W</span>
+        <span>v0.9.2</span>
+        <span>MIT</span>
+      </div>
+    </div>
+  </div>
+</footer>
+
+</main>
+
+<script>
+(function(){
+  if(!('IntersectionObserver' in window)){
+    document.querySelectorAll('.reveal,.group').forEach(function(el){el.classList.add('in');});
+    return;
+  }
+  var io=new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}
+    });
+  },{threshold:0.12,rootMargin:'0px 0px -7% 0px'});
+  document.querySelectorAll('.reveal,.group').forEach(function(el){io.observe(el);});
+})();
+</script>
+<script>
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape' && window.parent !== window) {
+    window.parent.postMessage({ type: 'close-fullscreen' }, '*');
+  }
+});
+</script>
+<!-- broken-img-handler -->
+<script>
+(function(){
+  if(window.__brokenImgHandler)return;
+  window.__brokenImgHandler=true;
+  var MAX=5,DELAYS=[2000,4000,8000,16000,32000];
+  document.addEventListener('error',function(e){
+    var img=e.target;
+    if(!img||img.tagName!=='IMG')return;
+    var liveSrc=img.getAttribute('src');
+    var src=img.dataset.haOriginalSrc||liveSrc;
+    if(!src)return;
+    if(img.dataset.haOriginalSrc&&liveSrc&&liveSrc!==img.dataset.haOriginalSrc&&liveSrc.indexOf('_r=')<0){src=liveSrc;img.dataset.haOriginalSrc=src;img.dataset.haRetryCount='0'}
+    else if(!img.dataset.haOriginalSrc){img.dataset.haOriginalSrc=src}
+    var attempt=parseInt(img.dataset.haRetryCount||'0',10);
+    if(img.dataset.haPhId){var old=document.getElementById(img.dataset.haPhId);if(old)old.remove()}
+    var ph=document.createElement('div');
+    ph.className='ha-img-placeholder'+(attempt>=MAX?' ha-failed':'');
+    ph.id='ha-ph-'+Math.random().toString(36).slice(2,9);
+    var w=img.getAttribute('width');var h=img.getAttribute('height');
+    if(w)ph.style.width=w+(isNaN(Number(w))?'':'px');
+    else if(img.style.width)ph.style.width=img.style.width;
+    else if(img.width>1)ph.style.width=img.width+'px';
+    if(h)ph.style.height=h+(isNaN(Number(h))?'':'px');
+    else if(img.style.height)ph.style.height=img.style.height;
+    else if(img.height>1)ph.style.height=img.height+'px';
+    ph.textContent=attempt>=MAX?'Image unavailable':'Loading image\u2026';
+    img.dataset.haPhId=ph.id;
+    if(img.dataset.haOrigDisplay==null)img.dataset.haOrigDisplay=img.style.display||'';
+    img.style.display='none';
+    img.insertAdjacentElement('afterend',ph);
+    if(attempt<MAX){
+      img.dataset.haRetryCount=String(attempt+1);
+      setTimeout(function(){
+        if(!img.isConnected)return;
+        if(img.dataset.haOriginalSrc!==src)return;
+        if(img.complete&&img.naturalWidth>0)return;
+        var curSrc=img.getAttribute('src');
+        if(curSrc&&curSrc.indexOf(src)!==0)return;
+        var fresh=src+(src.indexOf('?')>=0?'&':'?')+'_r='+(attempt+1)+'_'+Date.now();
+        img.src=fresh;
+      },DELAYS[attempt]);
+    }
+  },true);
+  document.addEventListener('load',function(e){
+    var img=e.target;
+    if(!img||img.tagName!=='IMG')return;
+    if(img.dataset.haPhId){
+      var ph=document.getElementById(img.dataset.haPhId);
+      if(ph)ph.remove();
+      delete img.dataset.haPhId;
+      img.style.display=img.dataset.haOrigDisplay||'';
+      delete img.dataset.haOrigDisplay;
+      delete img.dataset.haOriginalSrc;
+      delete img.dataset.haRetryCount;
+    }
+  },true);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en" class="js">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Route Spec — Substack → Astro · Portage</title>
+<meta name="description" content="Portage route specification: migrating a Substack publication to Astro from the export archive (HTML + CSV). Field mapping, content cleanup, assets, routes and redirects, limitations, edge cases, output schema, and CLI.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Outfit:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#FCEBD5;
+  --bg-deep:#F4DCC0;
+  --surface:#FFFBF4;
+  --surface-2:#F7E6CE;
+  --line:#EBDCC2;
+  --line-soft:#F3E5D0;
+  --cyan:#2E6E88;
+  --cyan-bright:#1F6182;
+  --amber:#8E6F3B;
+  --amber-bright:#7C6132;
+  --copper:#4E7C57;
+  --copper-bright:#3F6E4A;
+  --text:#1F2127;
+  --text-dim:#5A5C5A;
+  --text-faint:#857F73;
+  --grid-line:rgba(110,84,44,0.055);
+  --mono:'Space Mono',ui-monospace,monospace;
+  --sans:'Outfit',system-ui,sans-serif;
+  --head:'Space Grotesk',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+@media (prefers-reduced-motion: no-preference){html{scroll-behavior:smooth;}}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-weight:400;font-size:16px;line-height:1.65;overflow-x:hidden;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}
+body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background-image:linear-gradient(var(--grid-line) 1px,transparent 1px),linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);background-size:74px 74px;}
+a{color:inherit;text-decoration:none;}
+h1,h2,h3,h4{font-family:var(--head);font-weight:500;letter-spacing:-0.01em;line-height:1.12;}
+.wrap{max-width:1160px;margin:0 auto;padding:0 40px;position:relative;z-index:1;}
+code{font-family:var(--mono);font-size:0.85em;background:var(--surface-2);color:var(--text);padding:2px 6px;border-radius:4px;border:1px solid var(--line);}
+
+/* nav */
+.nav{position:sticky;top:0;z-index:50;background:rgba(252,235,213,0.92);border-bottom:1px solid var(--line);}
+.nav-inner{max-width:1160px;margin:0 auto;padding:0 40px;height:64px;display:flex;align-items:center;justify-content:space-between;gap:24px;}
+.brand{display:flex;align-items:baseline;gap:11px;}
+.brand-mark{font-family:var(--head);font-weight:700;font-size:20px;letter-spacing:0.02em;color:var(--text);}
+.brand-mark .sl{color:var(--cyan);}
+.brand-word{font-family:var(--head);font-weight:500;font-size:18px;color:var(--text);}
+.nav-right{display:flex;align-items:center;gap:24px;}
+.nav-right a{font-family:var(--mono);font-size:13px;letter-spacing:0.05em;color:var(--text-dim);transition:color .2s ease;}
+.nav-right a:hover{color:var(--cyan-bright);}
+.nav-tag{font-family:var(--mono);font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);border:1px solid var(--line);padding:4px 9px;border-radius:3px;}
+
+/* badges */
+.badge{font-family:var(--mono);font-size:12px;letter-spacing:0.1em;text-transform:uppercase;display:inline-flex;align-items:center;gap:8px;padding:5px 11px;border-radius:3px;border:1px solid var(--line);background:var(--surface);}
+.badge .dot{width:7px;height:7px;border-radius:50%;}
+.badge.active{color:var(--copper-bright);border-color:rgba(63,110,74,0.4);}
+.badge.active .dot{background:var(--copper-bright);box-shadow:0 0 0 3px rgba(63,110,74,0.16);}
+.badge.beta{color:var(--amber-bright);border-color:rgba(142,111,59,0.4);}
+.badge.beta .dot{background:var(--amber);}
+.badge.planned{color:var(--text-faint);}
+.badge.planned .dot{background:transparent;border:1px solid var(--text-faint);}
+
+/* hero */
+.spec-hero{position:relative;overflow:hidden;padding:60px 0 44px;border-bottom:1px solid var(--line);}
+.crumb{font-family:var(--mono);font-size:12px;letter-spacing:0.08em;color:var(--text-faint);margin-bottom:22px;}
+.crumb a{color:var(--cyan);}
+.crumb a:hover{color:var(--cyan-bright);}
+.spec-kicker{font-family:var(--mono);font-size:12px;letter-spacing:0.2em;text-transform:uppercase;color:var(--cyan);margin-bottom:16px;}
+.spec-title{font-size:clamp(38px,6.4vw,64px);font-weight:500;letter-spacing:-0.025em;line-height:1;}
+.spec-title .arr{color:var(--amber);}
+.spec-title .dest{color:var(--cyan-bright);}
+.spec-lede{color:var(--text-dim);font-size:18px;max-width:620px;margin-top:22px;}
+.hero-head-row{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:26px;}
+.meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:34px;}
+.meta-cell{background:var(--bg);padding:14px 16px;}
+.meta-cell .k{font-family:var(--mono);font-size:10.5px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);}
+.meta-cell .v{font-family:var(--mono);font-size:13.5px;color:var(--text);margin-top:7px;word-break:break-word;}
+.meta-cell .v.cy{color:var(--cyan-bright);}
+.hydro{position:absolute;right:-220px;top:-40px;width:520px;height:520px;z-index:0;pointer-events:none;opacity:0.7;}
+.hydro use{fill:none;stroke:var(--cyan);stroke-width:1.2;}
+
+/* layout */
+.spec-layout{display:grid;grid-template-columns:212px 1fr;gap:58px;align-items:start;padding:54px 0 90px;}
+.toc{position:sticky;top:88px;}
+.toc-title{font-family:var(--mono);font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);margin-bottom:16px;}
+.toc a{display:block;font-size:14px;color:var(--text-dim);padding:7px 0 7px 14px;border-left:2px solid var(--line);transition:color .2s ease,border-color .2s ease;}
+.toc a .n{font-family:var(--mono);font-size:11px;color:var(--text-faint);margin-right:8px;}
+.toc a:hover{color:var(--text);}
+.toc a.active{color:var(--cyan-bright);border-left-color:var(--cyan);}
+.toc a.active .n{color:var(--cyan);}
+
+/* spec content */
+.spec-sec{margin-bottom:56px;scroll-margin-top:92px;}
+.spec-sec>h2{font-size:27px;display:flex;align-items:baseline;gap:13px;margin-bottom:8px;}
+.spec-sec>h2 .num{font-family:var(--mono);font-size:14px;color:var(--amber);font-weight:400;}
+.spec-sec h3{font-size:17px;margin:28px 0 8px;color:var(--text);}
+.spec-sec p{color:var(--text-dim);margin:12px 0;}
+.spec-sec strong{color:var(--text);font-weight:600;}
+.spec-sec ul{list-style:none;margin:14px 0;}
+.spec-sec li{color:var(--text-dim);padding:6px 0 6px 24px;position:relative;}
+.spec-sec li::before{content:'—';position:absolute;left:0;color:var(--amber);}
+.spec-sec li strong{color:var(--text);}
+
+/* tables */
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface);margin:20px 0;}
+table{border-collapse:collapse;width:100%;min-width:660px;}
+thead th{font-family:var(--mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);text-align:left;padding:13px 16px;border-bottom:1px solid var(--line);background:var(--bg-deep);white-space:nowrap;}
+tbody td{padding:13px 16px;border-bottom:1px solid var(--line-soft);font-size:14px;color:var(--text-dim);vertical-align:top;}
+tbody tr:last-child td{border-bottom:none;}
+.gf{font-family:var(--mono);color:var(--text);font-size:12.5px;}
+.af{font-family:var(--mono);color:var(--cyan-bright);font-size:12.5px;}
+.ty{font-family:var(--mono);color:var(--amber-bright);font-size:12px;}
+.arrowcell{color:var(--amber);text-align:center;font-family:var(--mono);width:34px;}
+
+/* notes */
+.note{border-left:3px solid var(--cyan);background:var(--surface);padding:15px 18px;border-radius:0 7px 7px 0;margin:20px 0;}
+.note .lbl{font-family:var(--mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--cyan);display:block;margin-bottom:7px;}
+.note p{margin:0;color:var(--text-dim);font-size:14.5px;}
+.note.warn{border-left-color:var(--amber);}
+.note.warn .lbl{color:var(--amber-bright);}
+.note.keep{border-left-color:var(--copper);}
+.note.keep .lbl{color:var(--copper-bright);}
+
+/* code blocks (dark anchor, consistent with landing page) */
+.code{background:#12151A;border:1px solid #23272E;border-radius:7px;overflow:hidden;margin:20px 0;box-shadow:0 16px 36px -26px rgba(20,32,48,0.4);}
+.code-bar{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid #23272E;background:#0D0F13;}
+.code-bar .name{font-family:var(--mono);font-size:12px;letter-spacing:0.1em;color:#AEB6C2;}
+.code-bar .meta{font-family:var(--mono);font-size:10.5px;letter-spacing:0.16em;text-transform:uppercase;color:#6B7480;}
+.code pre{font-family:var(--mono);font-size:13px;line-height:1.85;padding:18px 20px;overflow-x:auto;white-space:pre;color:#E3E6EA;}
+.code .pr{color:#7FB0C6;user-select:none;}
+.code .fl{color:#CBAE7E;}
+.code .c{color:#6B7480;}
+.code .k{color:#7FB0C6;}
+.code .s{color:#A8C39B;}
+.code .t{color:#CBAE7E;}
+.code .out{color:#737C86;}
+
+/* footer */
+.foot{border-top:1px solid var(--line);padding:46px 0;}
+.foot-inner{display:flex;flex-wrap:wrap;gap:18px 28px;justify-content:space-between;align-items:center;}
+.foot a{color:var(--cyan);}
+.foot a:hover{color:var(--cyan-bright);}
+.foot .meta{display:flex;flex-wrap:wrap;gap:22px;}
+.foot .meta span{font-family:var(--mono);font-size:12px;letter-spacing:0.08em;color:var(--text-faint);}
+
+@media (max-width:900px){
+  .wrap{padding:0 24px;}
+  .nav-inner{padding:0 24px;}
+  .hydro{display:none;}
+  .spec-layout{grid-template-columns:1fr;gap:0;padding:30px 0 70px;}
+  .toc{position:static;margin-bottom:36px;padding-bottom:24px;border-bottom:1px solid var(--line);}
+  .toc-list{display:flex;flex-wrap:wrap;gap:8px;}
+  .toc a{border-left:none;border:1px solid var(--line);border-radius:20px;padding:6px 13px;}
+  .toc a.active{border-color:var(--cyan);}
+}
+@media (max-width:600px){
+  .nav-tag{display:none;}
+  .nav-right{gap:16px;}
+}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto;}}
+</style>
+<style>
+.ha-img-placeholder{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;background:#f4f4f5;border:1px dashed #d4d4d8;border-radius:8px;color:#71717a;font-size:12px;font-family:system-ui,sans-serif;min-height:80px;padding:16px;box-sizing:border-box;animation:ha-img-pulse 1.5s ease-in-out infinite}
+.ha-img-placeholder.ha-failed{animation:none;opacity:.7}
+@keyframes ha-img-pulse{0%,100%{opacity:1}50%{opacity:.5}}
+@media(prefers-color-scheme:dark){.ha-img-placeholder{background:#27272a;border-color:#3f3f46;color:#a1a1aa}}
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a href="#top" class="brand">
+      <span class="brand-mark">P<span class="sl">//</span></span>
+      <span class="brand-word">Portage</span>
+    </a>
+    <div class="nav-right">
+      <span class="nav-tag">Route Spec</span>
+      <a href="#s01">Overview</a>
+      <a href="#s10">CLI</a>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+
+<section class="spec-hero">
+  <svg class="hydro" viewBox="0 0 520 520" aria-hidden="true">
+    <defs>
+      <path id="contour" d="M -96,-46 C -60,-98 46,-102 88,-58 C 128,-18 100,60 42,86 C -14,108 -92,72 -106,16 C -118,-14 -122,-18 -96,-46 Z"/>
+    </defs>
+    <g transform="translate(300 240)">
+      <use href="#contour" transform="scale(0.55)" stroke-opacity="0.34"/>
+      <use href="#contour" transform="scale(0.85)" stroke-opacity="0.24"/>
+      <use href="#contour" transform="scale(1.18)" stroke-opacity="0.15"/>
+      <use href="#contour" transform="scale(1.55)" stroke-opacity="0.09"/>
+    </g>
+  </svg>
+  <div class="wrap">
+    <p class="crumb"><a href="#top">Portage</a> / Routes / <span>Substack → Astro</span></p>
+    <p class="spec-kicker">// Route specification</p>
+    <h1 class="spec-title">Substack <span class="arr">→</span> <span class="dest">Astro</span></h1>
+    <p class="spec-lede">A crossing for a Substack publication: newsletter posts, subtitles, images, and footnotes mapped to Astro content collections from the export archive — with subscribe widgets, paywall CTAs, and share buttons stripped out.</p>
+    <div class="hero-head-row">
+      <span class="badge beta"><span class="dot"></span>Beta</span>
+      <span class="meta-cell" style="background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:8px 14px;"><span class="v" style="font-family:var(--mono);font-size:13px;color:var(--text-dim);">portage v0.9.2</span></span>
+    </div>
+    <div class="meta-grid">
+      <div class="meta-cell"><div class="k">Source</div><div class="v">Substack export</div></div>
+      <div class="meta-cell"><div class="k">Method</div><div class="v cy">Archive (HTML + CSV)</div></div>
+      <div class="meta-cell"><div class="k">Output</div><div class="v">Markdown · MDX</div></div>
+      <div class="meta-cell"><div class="k">Target</div><div class="v cy">Content collections</div></div>
+      <div class="meta-cell"><div class="k">Spec rev</div><div class="v">2026.06 · r1</div></div>
+    </div>
+  </div>
+</section>
+
+<div class="wrap">
+  <div class="spec-layout">
+    <aside class="toc">
+      <div class="toc-title">Contents</div>
+      <nav class="toc-list">
+        <a href="#s01"><span class="n">01</span>Overview</a>
+        <a href="#s02"><span class="n">02</span>Export</a>
+        <a href="#s03"><span class="n">03</span>Content mapping</a>
+        <a href="#s04"><span class="n">04</span>Transforms</a>
+        <a href="#s05"><span class="n">05</span>Assets</a>
+        <a href="#s06"><span class="n">06</span>Routes &amp; redirects</a>
+        <a href="#s07"><span class="n">07</span>Out of scope</a>
+        <a href="#s08"><span class="n">08</span>Edge cases</a>
+        <a href="#s09"><span class="n">09</span>Output</a>
+        <a href="#s10"><span class="n">10</span>CLI</a>
+        <a href="#s11"><span class="n">11</span>Verification</a>
+      </nav>
+    </aside>
+    <div class="spec-body">
+
+<section class="spec-sec" id="s01">
+  <h2><span class="num">01</span>Overview</h2>
+  <p>This route carries a Substack publication into an Astro project as <strong>content collections</strong> backed by Markdown or MDX. Substack has no stable public API, so the source of truth is the <strong>export archive</strong> — a ZIP of rendered post HTML plus a <code>posts.csv</code> metadata table.</p>
+  <p>Substack's HTML is heavy with growth chrome — subscribe widgets, share buttons, paywall calls-to-action, comment prompts. The bulk of this route is <strong>cleanup</strong>: reducing each post to the article itself, then converting to clean Markdown with footnotes intact.</p>
+  <div class="note keep">
+    <span class="lbl">Moves intact</span>
+    <p>Published posts, subtitles, body content, inline images, footnotes, publish dates, audience (free / paid) flags, and canonical post URLs.</p>
+  </div>
+</section>
+
+<section class="spec-sec" id="s02">
+  <h2><span class="num">02</span>Export</h2>
+  <p>From <code>Settings → Exports → Create a new export</code>, Substack emails a download link to a ZIP. Portage joins each post's HTML to its metadata row in <code>posts.csv</code> by <code>post_id</code>.</p>
+  <div class="code">
+    <div class="code-bar"><span class="name">export archive</span><span class="meta">zip</span></div>
+<pre>substack-export/
+├── posts.csv               <span class="c">← post_id, title, subtitle, post_date,</span>
+│                           <span class="c">  type, audience, is_published, email_sent</span>
+├── posts/
+│   ├── 148210.leaving-the-feed.html
+│   └── <span class="c">… one HTML file per post</span>
+└── email_list.csv          <span class="c">← subscribers (out of scope — §07)</span></pre>
+  </div>
+  <div class="code">
+    <div class="code-bar"><span class="name">extract · archive</span><span class="meta">bash</span></div>
+<pre><span class="pr">$</span> npx portage extract <span class="fl">--from</span> substack \
+    <span class="fl">--export</span> ./substack-export.zip <span class="fl">--to</span> ./astro-project
+<span class="out">→ 88 posts · 84 web · 4 paid (truncated) · 152 images referenced</span></pre>
+  </div>
+  <div class="note">
+    <span class="lbl">Note</span>
+    <p>The export is authoritative and offline-friendly. Unpublished drafts are included in <code>posts.csv</code> with <code>is_published=false</code> and skipped unless you pass <code>--include-drafts</code>.</p>
+  </div>
+</section>
+
+<section class="spec-sec" id="s03">
+  <h2><span class="num">03</span>Content mapping</h2>
+  <p>Metadata comes from <code>posts.csv</code>; the body comes from the matching HTML file. The filename pattern <code>{post_id}.{slug}.html</code> yields the slug.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Substack field</th><th>Source</th><th></th><th>Astro frontmatter</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><span class="gf">title</span></td><td><span class="ty">csv</span></td><td class="arrowcell">→</td><td><span class="af">title</span></td><td>Required.</td></tr>
+        <tr><td><span class="gf">{slug}</span></td><td><span class="ty">filename</span></td><td class="arrowcell">→</td><td><span class="af">(filename)</span></td><td>From <code>{post_id}.{slug}.html</code>.</td></tr>
+        <tr><td><span class="gf">subtitle</span></td><td><span class="ty">csv</span></td><td class="arrowcell">→</td><td><span class="af">description</span></td><td>Substack's standfirst.</td></tr>
+        <tr><td><span class="gf">(post body)</span></td><td><span class="ty">html</span></td><td class="arrowcell">→</td><td><span class="af">(body)</span></td><td>Cleaned &amp; converted — see §04.</td></tr>
+        <tr><td><span class="gf">post_date</span></td><td><span class="ty">csv</span></td><td class="arrowcell">→</td><td><span class="af">pubDate</span></td><td>Coerced by zod.</td></tr>
+        <tr><td><span class="gf">audience</span></td><td><span class="ty">csv</span></td><td class="arrowcell">→</td><td><span class="af">access</span></td><td><code>everyone</code> → public; <code>only_paid·founding</code> → members.</td></tr>
+        <tr><td><span class="gf">type</span></td><td><span class="ty">csv</span></td><td class="arrowcell">→</td><td><span class="af">type</span></td><td><code>newsletter · podcast · thread</code>.</td></tr>
+        <tr><td><span class="gf">is_published</span></td><td><span class="ty">csv</span></td><td class="arrowcell">→</td><td><span class="af">draft</span></td><td><code>false</code> → <code>draft: true</code>.</td></tr>
+        <tr><td><span class="gf">(first figure image)</span></td><td><span class="ty">html</span></td><td class="arrowcell">→</td><td><span class="af">heroImage</span></td><td>Derived — Substack has no feature-image field.</td></tr>
+        <tr><td><span class="gf">canonical</span></td><td><span class="ty">derived</span></td><td class="arrowcell">→</td><td><span class="af">canonicalURL</span></td><td><code>{publication}/p/{slug}</code>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="spec-sec" id="s04">
+  <h2><span class="num">04</span>Content transforms</h2>
+  <p>This is the heavy lifting. Substack wraps articles in <code>.available-content</code> markup interleaved with growth widgets. Portage strips the chrome, keeps the article, converts to Markdown, and preserves footnotes.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Substack element</th><th></th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td><span class="gf">subscribe widget</span></td><td class="arrowcell">→</td><td>Removed</td></tr>
+        <tr><td><span class="gf">share / "leave a comment" buttons</span></td><td class="arrowcell">→</td><td>Removed</td></tr>
+        <tr><td><span class="gf">"Thanks for reading… Subscribe" footer</span></td><td class="arrowcell">→</td><td>Removed</td></tr>
+        <tr><td><span class="gf">paywall marker (.paywall)</span></td><td class="arrowcell">→</td><td>Boundary recorded; body flagged if truncated</td></tr>
+        <tr><td><span class="gf">captioned image (.captioned-image)</span></td><td class="arrowcell">→</td><td><code>![alt](src)</code> + caption / <span class="af">&lt;Figure&gt;</span></td></tr>
+        <tr><td><span class="gf">footnotes (.footnote-anchor)</span></td><td class="arrowcell">→</td><td>Markdown footnotes <code>[^1]</code></td></tr>
+        <tr><td><span class="gf">pullquote / blockquote</span></td><td class="arrowcell">→</td><td>Blockquote</td></tr>
+        <tr><td><span class="gf">tweet / YouTube / embedded post</span></td><td class="arrowcell">→</td><td>Link fallback / <span class="af">&lt;Embed&gt;</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">
+    <span class="lbl">Stripping CTAs</span>
+    <p><code>--strip-cta</code> (default on) removes Substack's subscribe / share / comment chrome. Disable it with <code>--strip-cta=false</code> if you want to triage the widgets by hand.</p>
+  </div>
+</section>
+
+<section class="spec-sec" id="s05">
+  <h2><span class="num">05</span>Assets</h2>
+  <p>Substack images are referenced through a CDN <strong>fetch proxy</strong> that wraps the real source URL — for example <code>substackcdn.com/image/fetch/w_1456,…/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2F…png</code>. Portage decodes the embedded origin, downloads the original, and rewrites the path.</p>
+  <ul>
+    <li><strong>Decode the proxy URL</strong> — the URL-encoded S3 origin after <code>/fetch/…/</code> is extracted; transform prefixes (<code>w_1456,c_limit,f_auto…</code>) are dropped.</li>
+    <li><strong>Download &amp; dedupe</strong> — originals are content-hashed; duplicates collapse to one file.</li>
+    <li><strong>Rewrite references</strong> — hero and in-body images point at local paths; Astro regenerates responsive sizes.</li>
+  </ul>
+  <div class="note warn">
+    <span class="lbl">Substack-specific</span>
+    <p>Parsing the nested, URL-encoded proxy origin is the step that trips up most ad-hoc Substack scripts. Portage handles it as a first-class transform.</p>
+  </div>
+</section>
+
+<section class="spec-sec" id="s06">
+  <h2><span class="num">06</span>Routes &amp; redirects</h2>
+  <p>Substack publishes every post under <code>/p/{slug}</code>. Portage preserves old links with redirects while moving to clean Astro routes.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Substack route</th><th></th><th>Astro route</th><th>Handled by</th></tr></thead>
+      <tbody>
+        <tr><td><span class="gf">/p/{slug}</span></td><td class="arrowcell">→</td><td><span class="af">/{slug}/</span></td><td>Post collection + 301 from <code>/p/{slug}</code></td></tr>
+        <tr><td><span class="gf">/archive</span></td><td class="arrowcell">→</td><td><span class="af">/</span></td><td>Index / blog listing</td></tr>
+        <tr><td><span class="gf">/feed</span></td><td class="arrowcell">→</td><td><span class="af">/rss.xml</span></td><td><code>@astrojs/rss</code> + redirect</td></tr>
+        <tr><td><span class="gf">{domain}/p/{slug}</span></td><td class="arrowcell">→</td><td><span class="af">/{slug}/</span></td><td>Custom-domain mapping</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li><strong>Keep the prefix</strong> — preserve <code>/p/{slug}</code> instead with <code>--route-base p</code>.</li>
+    <li><strong>Trailing slashes &amp; sitemap</strong> — <code>trailingSlash: 'always'</code> and <code>@astrojs/sitemap</code> set to the new base URL.</li>
+  </ul>
+</section>
+
+<section class="spec-sec" id="s07">
+  <h2><span class="num">07</span>Out of scope</h2>
+  <p>Substack is a newsletter, payments, and community platform. Portage moves the writing; the platform machinery stays behind, and it tells you what it skipped.</p>
+  <ul>
+    <li><strong>Subscribers</strong> — <code>email_list.csv</code> is carried for portability, but sign-up and auth are yours to rebuild.</li>
+    <li><strong>Paid subscriptions &amp; Stripe</strong> — billing relationships can't be migrated.</li>
+    <li><strong>Email delivery</strong> — past issues become posts; sending does not.</li>
+    <li><strong>Comments &amp; Notes</strong> — not meaningfully exported.</li>
+    <li><strong>Podcast audio</strong> — episodes link out; audio files aren't rehosted by default.</li>
+    <li><strong>Recommendations &amp; network</strong> — Substack-specific discovery features.</li>
+  </ul>
+  <div class="note warn">
+    <span class="lbl">Paid posts</span>
+    <p>For <code>only_paid</code> / <code>founding</code> posts, the export often contains only the free preview above the paywall. Portage writes what's present, sets <code>access: members</code> + <code>draft: true</code>, and flags any truncated body so you can re-supply the full text.</p>
+  </div>
+</section>
+
+<section class="spec-sec" id="s08">
+  <h2><span class="num">08</span>Edge cases</h2>
+  <ul>
+    <li><strong>Paywalled posts truncated in export</strong> — flagged and gated, never published by accident.</li>
+    <li><strong>Post type</strong> — <code>podcast</code> and <code>thread</code> rows are skipped unless <code>--include-podcasts</code> / <code>--include-threads</code>.</li>
+    <li><strong>Footnotes</strong> — Substack anchors convert to Markdown footnotes.</li>
+    <li><strong>Authors</strong> — <code>posts.csv</code> lacks reliable per-post authorship; defaults to the publication, overridable via <code>--author-map</code>.</li>
+    <li><strong>Drafts</strong> — <code>is_published=false</code> rows carry <code>draft: true</code>, included only with <code>--include-drafts</code>.</li>
+    <li><strong>Image proxy URLs</strong> — nested URL-encoded S3 origins are decoded before download.</li>
+    <li><strong>Embeds</strong> — tweets and videos fall back to links, or MDX <code>&lt;Embed&gt;</code> components.</li>
+  </ul>
+</section>
+
+<section class="spec-sec" id="s09">
+  <h2><span class="num">09</span>Output</h2>
+  <p>A predictable, buildable Astro project, with a manifest ledger at the root.</p>
+  <div class="code">
+    <div class="code-bar"><span class="name">project tree</span><span class="meta">output</span></div>
+<pre>astro-project/
+├── src/
+│   ├── content/
+│   │   └── blog/             <span class="c">← 84 posts (4 paid gated)</span>
+│   ├── assets/blog/          <span class="c">← 131 localized images</span>
+│   ├── components/portage/   <span class="c">← MDX stubs (if --content mdx)</span>
+│   └── content.config.ts
+├── public/_redirects        <span class="c">← 88 /p/{slug} redirects</span>
+├── members.csv              <span class="c">← exported subscribers (reference)</span>
+├── portage.manifest.json    <span class="c">← extract / transform / load ledger</span>
+└── astro.config.mjs         <span class="c">← trailingSlash · sitemap · redirects</span></pre>
+  </div>
+  <h3>Content collection schema</h3>
+  <div class="code">
+    <div class="code-bar"><span class="name">src/content.config.ts</span><span class="meta">typescript</span></div>
+<pre><span class="k">import</span> { defineCollection, z } <span class="k">from</span> <span class="s">'astro:content'</span>;
+<span class="k">import</span> { glob } <span class="k">from</span> <span class="s">'astro/loaders'</span>;
+
+<span class="k">const</span> blog = defineCollection({
+  loader: glob({ pattern: <span class="s">'**/*.{md,mdx}'</span>, base: <span class="s">'./src/content/blog'</span> }),
+  schema: ({ image }) => z.object({
+    title: z.string(),
+    description: z.string().optional(),
+    pubDate: z.coerce.date(),
+    heroImage: image().optional(),
+    access: z.enum([<span class="s">'public'</span>, <span class="s">'members'</span>]).default(<span class="s">'public'</span>),
+    type: z.enum([<span class="s">'newsletter'</span>, <span class="s">'podcast'</span>, <span class="s">'thread'</span>]).default(<span class="s">'newsletter'</span>),
+    draft: z.boolean().default(false),
+    canonicalURL: z.string().url().optional(),
+  }),
+});
+
+<span class="k">export const</span> collections = { blog };</pre>
+  </div>
+  <h3>Sample migrated post</h3>
+  <div class="code">
+    <div class="code-bar"><span class="name">src/content/blog/leaving-the-feed.md</span><span class="meta">markdown</span></div>
+<pre><span class="t">---</span>
+<span class="k">title:</span> <span class="s">"Leaving the Feed"</span>
+<span class="k">description:</span> <span class="s">"On owning the publish button again."</span>
+<span class="k">pubDate:</span> 2026-02-11
+<span class="k">heroImage:</span> ../../assets/blog/leaving-the-feed.jpg
+<span class="k">access:</span> public
+<span class="k">type:</span> newsletter
+<span class="k">canonicalURL:</span> <span class="s">"https://example.substack.com/p/leaving-the-feed"</span>
+<span class="t">---</span>
+
+The newsletter went out fine.[^1] The platform was the problem…
+
+[^1]: 11,400 sends, 64% open rate — numbers I now keep myself.</pre>
+  </div>
+</section>
+
+<section class="spec-sec" id="s10">
+  <h2><span class="num">10</span>CLI</h2>
+  <p>Three stages, run in order. Cleanup runs at transform time.</p>
+  <div class="code">
+    <div class="code-bar"><span class="name">portage · substack → astro</span><span class="meta">bash</span></div>
+<pre><span class="pr">$</span> npx portage extract <span class="fl">--from</span> substack <span class="fl">--export</span> ./substack-export.zip <span class="fl">--to</span> ./astro-project
+<span class="pr">$</span> npx portage transform <span class="fl">--schema</span> content-collections <span class="fl">--content</span> mdx <span class="fl">--strip-cta</span>
+<span class="pr">$</span> npx portage load <span class="fl">--images</span> assets <span class="fl">--redirects</span> netlify</pre>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Flag</th><th>Values</th><th>Default</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><span class="gf">--export</span></td><td><span class="ty">path</span></td><td>—</td><td>Substack export ZIP. Required.</td></tr>
+        <tr><td><span class="gf">--strip-cta</span></td><td><span class="ty">flag</span></td><td><span class="ty">on</span></td><td>Remove subscribe / share / comment chrome.</td></tr>
+        <tr><td><span class="gf">--include-drafts</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Carry unpublished rows.</td></tr>
+        <tr><td><span class="gf">--include-podcasts · --include-threads</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Bring non-newsletter post types.</td></tr>
+        <tr><td><span class="gf">--author-map</span></td><td><span class="ty">path</span></td><td>—</td><td>Assign per-post authors.</td></tr>
+        <tr><td><span class="gf">--route-base</span></td><td><span class="ty">string</span></td><td><span class="ty">/</span></td><td>Flatten or keep <code>/p/</code>.</td></tr>
+        <tr><td><span class="gf">--dry-run</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Plan &amp; diff only.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="spec-sec" id="s11">
+  <h2><span class="num">11</span>Verification</h2>
+  <p>Every crossing is auditable. The dry-run is where paid-post truncation and skipped types surface — before anything is written.</p>
+  <ul>
+    <li><strong>Dry-run first</strong> — <code>--dry-run</code> prints the plan and a diff; nothing is written.</li>
+    <li><strong>Manifest ledger</strong> — records each <code>post_id</code>, its checksum, transforms applied, and whether the body was truncated at a paywall.</li>
+    <li><strong>Counted on, counted off</strong> — gated, skipped, and truncated posts are listed explicitly.</li>
+  </ul>
+  <div class="code">
+    <div class="code-bar"><span class="name">portage load --dry-run</span><span class="meta">bash</span></div>
+<pre><span class="pr">$</span> npx portage load <span class="fl">--dry-run</span>
+<span class="out">→ 88 posts → 84 files          ✓ (2 threads, 2 podcasts skipped)</span>
+<span class="out">→ 152 images → 131 unique      ✓ proxy URLs decoded</span>
+<span class="out">→ 88 redirects from /p/{slug}  ✓</span>
+<span class="out">→ 4 paid posts gated           ⚠ access: members · bodies truncated</span>
+<span class="out">→ 0 unresolved references      ✓ nothing left on the dock</span></pre>
+  </div>
+</section>
+
+    </div>
+  </div>
+</div>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot-inner">
+      <span style="font-family:var(--mono);font-size:13px;color:var(--text-dim);">Portage route spec · <a href="#top">Substack → Astro</a></span>
+      <div class="meta">
+        <span>Salish Sea Consulting</span>
+        <span>v0.9.2</span>
+        <span>MIT</span>
+      </div>
+    </div>
+  </div>
+</footer>
+
+
+</main>
+
+<script>
+(function(){
+  if(!('IntersectionObserver' in window))return;
+  var links=Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+  var map={};
+  links.forEach(function(a){map[a.getAttribute('href').slice(1)]=a;});
+  var spy=new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting){
+        links.forEach(function(l){l.classList.remove('active');});
+        if(map[e.target.id])map[e.target.id].classList.add('active');
+      }
+    });
+  },{rootMargin:'-20% 0px -72% 0px',threshold:0});
+  document.querySelectorAll('.spec-sec').forEach(function(s){spy.observe(s);});
+})();
+</script>
+<script>
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape' && window.parent !== window) {
+    window.parent.postMessage({ type: 'close-fullscreen' }, '*');
+  }
+});
+</script>
+<!-- broken-img-handler -->
+<script>
+(function(){
+  if(window.__brokenImgHandler)return;
+  window.__brokenImgHandler=true;
+  var MAX=5,DELAYS=[2000,4000,8000,16000,32000];
+  document.addEventListener('error',function(e){
+    var img=e.target;
+    if(!img||img.tagName!=='IMG')return;
+    var liveSrc=img.getAttribute('src');
+    var src=img.dataset.haOriginalSrc||liveSrc;
+    if(!src)return;
+    if(img.dataset.haOriginalSrc&&liveSrc&&liveSrc!==img.dataset.haOriginalSrc&&liveSrc.indexOf('_r=')<0){src=liveSrc;img.dataset.haOriginalSrc=src;img.dataset.haRetryCount='0'}
+    else if(!img.dataset.haOriginalSrc){img.dataset.haOriginalSrc=src}
+    var attempt=parseInt(img.dataset.haRetryCount||'0',10);
+    if(img.dataset.haPhId){var old=document.getElementById(img.dataset.haPhId);if(old)old.remove()}
+    var ph=document.createElement('div');
+    ph.className='ha-img-placeholder'+(attempt>=MAX?' ha-failed':'');
+    ph.id='ha-ph-'+Math.random().toString(36).slice(2,9);
+    var w=img.getAttribute('width');var h=img.getAttribute('height');
+    if(w)ph.style.width=w+(isNaN(Number(w))?'':'px');
+    else if(img.style.width)ph.style.width=img.style.width;
+    else if(img.width>1)ph.style.width=img.width+'px';
+    if(h)ph.style.height=h+(isNaN(Number(h))?'':'px');
+    else if(img.style.height)ph.style.height=img.style.height;
+    else if(img.height>1)ph.style.height=img.height+'px';
+    ph.textContent=attempt>=MAX?'Image unavailable':'Loading image\u2026';
+    img.dataset.haPhId=ph.id;
+    if(img.dataset.haOrigDisplay==null)img.dataset.haOrigDisplay=img.style.display||'';
+    img.style.display='none';
+    img.insertAdjacentElement('afterend',ph);
+    if(attempt<MAX){
+      img.dataset.haRetryCount=String(attempt+1);
+      setTimeout(function(){
+        if(!img.isConnected)return;
+        if(img.dataset.haOriginalSrc!==src)return;
+        if(img.complete&&img.naturalWidth>0)return;
+        var curSrc=img.getAttribute('src');
+        if(curSrc&&curSrc.indexOf(src)!==0)return;
+        var fresh=src+(src.indexOf('?')>=0?'&':'?')+'_r='+(attempt+1)+'_'+Date.now();
+        img.src=fresh;
+      },DELAYS[attempt]);
+    }
+  },true);
+  document.addEventListener('load',function(e){
+    var img=e.target;
+    if(!img||img.tagName!=='IMG')return;
+    if(img.dataset.haPhId){
+      var ph=document.getElementById(img.dataset.haPhId);
+      if(ph)ph.remove();
+      delete img.dataset.haPhId;
+      img.style.display=img.dataset.haOrigDisplay||'';
+      delete img.dataset.haOrigDisplay;
+      delete img.dataset.haOriginalSrc;
+      delete img.dataset.haRetryCount;
+    }
+  },true);
+})();
+</script>
+</body>
+</html>

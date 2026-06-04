@@ -1,0 +1,44 @@
+---
+interface Props {
+  style?: string;
+  simplified?: boolean;
+}
+
+const { style, simplified = false } = Astro.props;
+---
+
+<svg class="hydro" viewBox="0 0 780 780" aria-hidden="true" preserveAspectRatio="xMidYMid meet" style={style}>
+  <defs>
+    <path id="contour" d="M -96,-46 C -60,-98 46,-102 88,-58 C 128,-18 100,60 42,86 C -14,108 -92,72 -106,16 C -118,-14 -122,-18 -96,-46 Z"/>
+  </defs>
+  <g transform="translate(452 372)">
+    <use href="#contour" transform="scale(0.60)" stroke-opacity="0.42"/>
+    <use href="#contour" transform="scale(0.90)" stroke-opacity="0.32"/>
+    <use href="#contour" transform="scale(1.22)" stroke-opacity="0.24"/>
+    <use href="#contour" transform="scale(1.56)" stroke-opacity="0.17"/>
+    <use href="#contour" transform="scale(1.94)" stroke-opacity="0.11"/>
+    <use href="#contour" transform="scale(2.36)" stroke-opacity="0.07"/>
+  </g>
+  {!simplified && (
+    <>
+      <text class="sounding" x="180" y="250">18</text>
+      <text class="sounding" x="270" y="588">24</text>
+      <text class="sounding" x="592" y="196">9</text>
+      <text class="sounding" x="650" y="318">6</text>
+      <text class="sounding" x="356" y="214">31</text>
+      <text class="sounding" x="540" y="556">12</text>
+      <text class="sounding" x="690" y="492">14</text>
+      <text class="sounding" x="232" y="436">22</text>
+      <g class="reticle">
+        <line x1="442" y1="356" x2="462" y2="356"/>
+        <line x1="452" y1="346" x2="452" y2="366"/>
+      </g>
+      <text class="compass" x="708" y="92">N</text>
+      <line class="reticle" x1="714" y1="100" x2="714" y2="124"/>
+      <path class="route-trace" d="M 150,612 C 268,548 312,476 452,372"/>
+      <circle class="route-node" cx="150" cy="612" r="5"/>
+      <circle class="route-dest" cx="452" cy="372" r="8"/>
+      <text class="route-label" x="468" y="358">ASTRO</text>
+    </>
+  )}
+</svg>

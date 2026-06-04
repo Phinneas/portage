@@ -1,17 +1,219 @@
 ---
+import Layout from '../layouts/Layout.astro';
+import HydroChart from '../components/HydroChart.astro';
 
+const routes = [
+  { origin: 'Ghost', status: 'active', transfers: 'Posts, tags, authors, images, and route slugs', href: '/routes/ghost' },
+  { origin: 'Squarespace', status: 'beta', transfers: 'Pages, blog posts, images, and redirect maps. XML export.', href: '/routes/squarespace' },
+  { origin: 'Substack', status: 'beta', transfers: 'Newsletter archive, posts, images, and canonical URLs', href: '/routes/substack' },
+  { origin: 'Webflow', status: 'planned', transfers: 'Content, assets, routes, and CMS collections via API', href: '#' },
+  { origin: 'WordPress', status: 'planned', transfers: 'Posts, pages, media, taxonomies, and SEO metadata', href: '#' },
+];
+
+const manifest = [
+  { icon: 'cy', title: 'Content', text: 'Posts, pages, collections, and CMS schemas. Mapped to Astro content collections or headless CMS structures.' },
+  { icon: 'am', title: 'Assets', text: 'Images, files, and media. URLs rewritten. Optimized for Astro\'s asset pipeline.' },
+  { icon: 'cy', title: 'Routes', text: 'URL structures, slugs, and redirect maps. Your SEO equity moves with you.' },
+  { icon: 'am', title: 'Metadata', text: 'Titles, descriptions, Open Graph, alt text, publish dates. Nothing discarded.' },
+];
+
+const steps = [
+  { idx: '01', title: 'Extract', text: 'Connect to source. Pull content, assets, and structure via API or export file.' },
+  { idx: '02', title: 'Transform', text: 'Normalize schemas. Map to Astro content collections or your target headless CMS. Generate type-safe data layers.' },
+  { idx: '03', title: 'Load', text: 'Write to Astro project. Output clean Markdown, MDX, or JSON. Asset references rewritten. Redirects generated.' },
+];
+
+const integrity = [
+  { idx: '01', title: 'No data loss', text: 'Every field in the manifest is checksummed on extract and verified on load. Mismatches halt the crossing.' },
+  { idx: '02', title: 'No lock-in', text: 'Output is plain Markdown, MDX, or JSON in your repository. Portage leaves no runtime behind.' },
+  { idx: '03', title: 'Reversible', text: 'Dry-run by default. Full diffs before anything is written. Nothing is overwritten without confirmation.' },
+  { idx: '04', title: 'Inspectable', text: 'Every transform is logged. The manifest is a file you can read, diff, and commit alongside your code.' },
+];
 ---
 
-<html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<link rel="icon" href="/favicon.ico" />
-		<meta name="viewport" content="width=device-width" />
-		<meta name="generator" content={Astro.generator} />
-		<title>Astro</title>
-	</head>
-	<body>
-		<h1>Astro</h1>
-	</body>
-</html>
+<Layout title="Portage — Carry your site across. Intact.">
+  <section class="hero" aria-label="Introduction">
+    <HydroChart />
+    <div class="wrap">
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <span class="kicker reveal">// Migration toolkit — Astro</span>
+          <h1 class="reveal">Carry your site<br>across. <span class="intact">Intact.</span></h1>
+          <p class="hero-sub reveal">Migration tools for Ghost, Squarespace, Substack, Webflow, and WordPress <span class="arrow">→</span> Astro. Content, assets, routes, and metadata. <span class="nowrap">No lock-in. No data loss.</span></p>
+          <div class="cta-row reveal">
+            <a href="#routes" class="btn btn-primary">View the Routes <span class="arr">→</span></a>
+            <a href="#manifest" class="btn btn-ghost">Read the Manifest</a>
+          </div>
+          <div class="readout group">
+            <div class="stat gi"><span class="v">05</span><span class="l">Charted routes</span></div>
+            <div class="stat gi"><span class="v amber">100%</span><span class="l">Metadata preserved</span></div>
+            <div class="stat gi"><span class="v copper">0</span><span class="l">Vendor lock-in</span></div>
+            <div class="stat gi"><span class="v">MIT</span><span class="l">Open license</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="routes" aria-label="Supported migrations">
+    <div class="wrap">
+      <div class="sec-head group">
+        <span class="kicker gi">// Supported migrations</span>
+        <h2 class="gi">The Routes</h2>
+        <p class="sec-note gi">Each route is a tested crossing — an origin platform to Astro, and the cargo that moves intact. Specs list every field, transform, and known edge.</p>
+      </div>
+      <div class="board group" role="table">
+        <div class="board-head" role="row">
+          <span>Route</span><span>Status</span><span>Transfers</span><span class="ta-r">Spec</span>
+        </div>
+        {routes.map((r) => (
+          <div class="board-row gi" role="row">
+            <span class="r-route" data-l="Route" role="cell">
+              <span class="origin">{r.origin}</span><span class="arr">→</span><span class="dest">Astro</span>
+            </span>
+            <span class={`r-status ${r.status}`} data-l="Status" role="cell">
+              <span class="dot"></span>{r.status.charAt(0).toUpperCase() + r.status.slice(1)}
+            </span>
+            <span class="r-note" data-l="Transfers" role="cell">{r.transfers}</span>
+            <span class="r-spec" data-l="Spec" role="cell">
+              <a href={r.href}>{r.status === 'planned' ? 'View Spec →' : 'View Spec →'}</a>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="manifest" aria-label="What Portage handles">
+    <div class="wrap">
+      <div class="sec-head group">
+        <span class="kicker gi">// What Portage handles</span>
+        <h2 class="gi">The Manifest</h2>
+        <p class="sec-note gi">A full accounting of what comes aboard. Four holds, nothing stowed loose.</p>
+      </div>
+      <div class="cols4 group">
+        {manifest.map((m) => (
+          <div class="col-item gi">
+            {m.title === 'Content' && (
+              <svg class="man-ico cy" viewBox="0 0 32 32" aria-hidden="true"><path d="M9 5h10l4 4v18H9z"/><path d="M19 5v4h4"/><path d="M13 14h6M13 18h6M13 22h4"/></svg>
+            )}
+            {m.title === 'Assets' && (
+              <svg class="man-ico am" viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="8" width="22" height="16" rx="1"/><circle cx="12" cy="14" r="2"/><path d="M5 21l6-5 5 4 4-3 7 5"/></svg>
+            )}
+            {m.title === 'Routes' && (
+              <svg class="man-ico cy" viewBox="0 0 32 32" aria-hidden="true"><circle cx="8" cy="8" r="2.5"/><circle cx="24" cy="24" r="2.5"/><path d="M8 11v7a3 3 0 0 0 3 3h10"/></svg>
+            )}
+            {m.title === 'Metadata' && (
+              <svg class="man-ico am" viewBox="0 0 32 32" aria-hidden="true"><path d="M6 7h10l10 9-10 9H6z"/><circle cx="12" cy="13" r="1.7"/></svg>
+            )}
+            <h3>{m.title}</h3>
+            <p>{m.text}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="docs" aria-label="How Portage works">
+    <div class="wrap">
+      <div class="sec-head group">
+        <span class="kicker gi">// Procedure</span>
+        <h2 class="gi">How Portage Works</h2>
+        <p class="sec-note gi">Three stages. Extract, transform, load. Each is inspectable, each is reversible, and nothing is written until the last.</p>
+      </div>
+      <div class="steps group">
+        {steps.map((s) => (
+          <div class="step gi">
+            <div class="idx">{s.idx}</div>
+            <h3>{s.title}</h3>
+            <p>{s.text}</p>
+          </div>
+        ))}
+      </div>
+      <div class="cli reveal">
+        <div class="cli-bar">
+          <span class="name">portage · cli</span>
+          <span class="meta">bash</span>
+        </div>
+        <pre class="cli-body"><span class="pr">$</span> npx portage extract <span class="fl">--from</span> ghost <span class="fl">--to</span> ./astro-project
+<span class="out">  → 142 entries · 318 assets · 12 collections</span>
+<span class="pr">$</span> npx portage transform <span class="fl">--schema</span> content-collections
+<span class="out">  → schemas normalized · type-safe layer generated</span>
+<span class="pr">$</span> npx portage load <span class="fl">--assets</span> ./public
+<span class="out">  → markdown written · 47 redirects mapped · done</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec band" id="integrity" aria-label="Integrity">
+    <div class="wrap">
+      <div class="sec-head group">
+        <span class="kicker gi">// Integrity</span>
+        <h2 class="gi">Nothing is left on the dock.</h2>
+        <p class="sec-note gi">Portage treats your content as cargo with a manifest. Every item is counted on, and counted off.</p>
+      </div>
+      <div class="cols4 group">
+        {integrity.map((i) => (
+          <div class="col-item gi">
+            <span class="col-idx">{i.idx}</span>
+            <h3>{i.title}</h3>
+            <p>{i.text}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="contact" aria-label="Salish Sea Consulting">
+    <div class="wrap">
+      <div class="parent-grid">
+        <div class="parent-copy reveal">
+          <span class="kicker">// Operated by</span>
+          <h2>An infrastructure product of Salish Sea Consulting.</h2>
+          <p>A small studio building migration and content tooling for teams leaving page-builders behind. We maintain Portage in the open, on the same schedule we'd want for our own crossings.</p>
+          <div class="cta-row" style="margin-top:30px;">
+            <a href="#" class="btn btn-ghost">Get in touch <span class="arr">→</span></a>
+          </div>
+        </div>
+        <div class="plate reveal" aria-label="Builder's plate">
+          <div class="pl-title">Salish Sea Consulting</div>
+          <div class="pl-row"><span class="pl-k">Established</span><span class="pl-v">2021 · Victoria, BC</span></div>
+          <div class="pl-row"><span class="pl-k">Bearing</span><span class="pl-v">48.4284° N · 123.3656° W</span></div>
+          <div class="pl-row"><span class="pl-k">Build</span><span class="pl-v">portage v0.9.2</span></div>
+          <div class="pl-row"><span class="pl-k">License</span><span class="pl-v">MIT · open source</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec band castoff" aria-label="Get started">
+    <svg class="hydro" viewBox="0 0 780 780" aria-hidden="true" preserveAspectRatio="xMidYMid meet" style="left:-200px;right:auto;opacity:0.5;">
+      <g transform="translate(300 372)">
+        <use href="#contour" transform="scale(0.62)" stroke-opacity="0.34"/>
+        <use href="#contour" transform="scale(0.96)" stroke-opacity="0.24"/>
+        <use href="#contour" transform="scale(1.34)" stroke-opacity="0.15"/>
+        <use href="#contour" transform="scale(1.78)" stroke-opacity="0.09"/>
+      </g>
+    </svg>
+    <div class="wrap">
+      <div class="castoff-inner reveal">
+        <span class="kicker">// Cast off</span>
+        <h2>Carry it across.</h2>
+        <p>Read the route specs, or pull the toolkit and run your first extract as a dry-run. Nothing is written until you say so.</p>
+        <div class="install"><span><span class="pr">$</span> npx portage@latest</span><span class="cp">copy</span></div>
+        <div class="cta-row">
+          <a href="#docs" class="btn btn-primary">Read the Docs <span class="arr">→</span></a>
+          <a href="#" class="btn btn-ghost" target="_blank" rel="noopener">View on GitHub</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<script>
+  document.querySelector('.install .cp')?.addEventListener('click', function() {
+    navigator.clipboard?.writeText('npx portage@latest');
+    this.textContent = 'copied';
+    setTimeout(() => this.textContent = 'copy', 1200);
+  });
+</script>
