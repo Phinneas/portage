@@ -4,6 +4,7 @@ import HydroChart from '../components/HydroChart.astro';
 
 const routes = [
   { origin: 'Ghost', status: 'active', transfers: 'Posts, tags, authors, images, and route slugs', href: '/routes/ghost' },
+  { origin: 'Gatsby', status: 'active', transfers: 'MDX/Markdown, GraphQL data layer, images, and plugin config', href: '/routes/gatsby' },
   { origin: 'Squarespace', status: 'beta', transfers: 'Pages, blog posts, images, and redirect maps. XML export.', href: '/routes/squarespace' },
   { origin: 'Substack', status: 'beta', transfers: 'Newsletter archive, posts, images, and canonical URLs', href: '/routes/substack' },
   { origin: 'Webflow', status: 'planned', transfers: 'Content, assets, routes, and CMS collections via API', href: '#' },
@@ -39,13 +40,13 @@ const integrity = [
         <div class="hero-copy">
           <span class="kicker reveal">// Migration toolkit — Astro</span>
           <h1 class="reveal">Carry your site<br>across. <span class="intact">Intact.</span></h1>
-          <p class="hero-sub reveal">Migration tools for Ghost, Squarespace, Substack, Webflow, and WordPress <span class="arrow">→</span> Astro. Content, assets, routes, and metadata. <span class="nowrap">No lock-in. No data loss.</span></p>
+          <p class="hero-sub reveal">Migration tools for Ghost, Gatsby, Squarespace, Substack, Webflow, and WordPress <span class="arrow">→</span> Astro. Content, assets, routes, and metadata. <span class="nowrap">No lock-in. No data loss.</span></p>
           <div class="cta-row reveal">
             <a href="#routes" class="btn btn-primary">View the Routes <span class="arr">→</span></a>
             <a href="#manifest" class="btn btn-ghost">Read the Manifest</a>
           </div>
           <div class="readout group">
-            <div class="stat gi"><span class="v">05</span><span class="l">Charted routes</span></div>
+            <div class="stat gi"><span class="v">06</span><span class="l">Charted routes</span></div>
             <div class="stat gi"><span class="v amber">100%</span><span class="l">Metadata preserved</span></div>
             <div class="stat gi"><span class="v copper">0</span><span class="l">Vendor lock-in</span></div>
             <div class="stat gi"><span class="v">MIT</span><span class="l">Open license</span></div>
@@ -69,7 +70,7 @@ const integrity = [
         {routes.map((r) => (
           <div class="board-row gi" role="row">
             <span class="r-route" data-l="Route" role="cell">
-              <span class="origin">{r.origin}</span><span class="arr">→</span><span class="dest">Astro</span>
+              <a href={r.href} class="r-route-link"><span class="origin">{r.origin}</span><span class="arr">→</span><span class="dest">Astro</span></a>
             </span>
             <span class={`r-status ${r.status}`} data-l="Status" role="cell">
               <span class="dot"></span>{r.status.charAt(0).toUpperCase() + r.status.slice(1)}

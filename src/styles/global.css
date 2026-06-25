@@ -548,6 +548,19 @@ section {
   font-size: 12px;
 }
 
+.r-route-link {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  flex-wrap: wrap;
+  color: inherit;
+  transition: opacity .2s ease;
+}
+
+.r-route-link:hover {
+  opacity: 0.7;
+}
+
 .r-status {
   font-family: var(--mono);
   font-size: 12px;
