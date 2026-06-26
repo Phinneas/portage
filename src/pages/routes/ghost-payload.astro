@@ -1,0 +1,501 @@
+---
+import SpecLayout from '../../layouts/SpecLayout.astro';
+
+const meta = [
+  { k: 'Source', v: 'Ghost 4 / 5' },
+  { k: 'Method', v: 'JSON export', cy: true },
+  { k: 'Output', v: 'Payload seed script · REST API push' },
+  { k: 'Target', v: 'Payload CMS (SQLite)', cy: true },
+  { k: 'Spec rev', v: '2026.06 · r1' },
+];
+
+const toc = [
+  { id: 's01', num: '01', label: 'Overview' },
+  { id: 's02', num: '02', label: 'Extraction' },
+  { id: 's03', num: '03', label: 'Content mapping' },
+  { id: 's04', num: '04', label: 'Transforms' },
+  { id: 's05', num: '05', label: 'Assets' },
+  { id: 's06', num: '06', label: 'Routes & redirects' },
+  { id: 's07', num: '07', label: 'Out of scope' },
+  { id: 's08', num: '08', label: 'Edge cases' },
+  { id: 's09', num: '09', label: 'Output' },
+  { id: 's10', num: '10', label: 'CLI' },
+  { id: 's11', num: '11', label: 'Verification' },
+];
+---
+
+<SpecLayout
+  title="Route Spec — Ghost → Payload · Portage"
+  description="Portage route specification: migrating a Ghost publication into Payload CMS. Field mapping to Payload collections, Lexical content conversion, media upload via Local API, seed script generation, and CLI."
+  origin="Ghost"
+  status="active"
+  lede="A crossing for the Ghost user who wants a headless CMS, not a static site: posts, pages, tags, authors, and media migrated into Payload collections backed by SQLite. The same Ghost export feeds this route as ghost2astro — the extraction is shared, the destination is different."
+  meta={meta}
+  toc={toc}
+>
+  <section class="spec-sec" id="s01">
+    <h2><span class="num">01</span>Overview</h2>
+    <p>This route carries a Ghost publication into a <strong>Payload CMS</strong> instance backed by SQLite. It is the first Portage route whose destination is not Astro content collections — instead of writing Markdown files, the load phase generates a <strong>Payload seed script</strong> that creates documents in Payload collections via the Local API.</p>
+    <p>The extraction phase reuses the <strong>ghost2astro JSON export parser</strong> identically. The same <code>ghost-export.json</code> file, the same <code>db[0].data</code> tables, the same manifest shape. The transform and load phases diverge: Ghost fields map to Payload collection schemas (with <strong>relationship fields</strong> instead of frontmatter arrays), and content is written via <code>payload.create()</code> calls instead of file writes.</p>
+    <div class="note keep">
+      <span class="lbl">Moves intact</span>
+      <p>Posts, pages, tags, authors, feature images, inline media, publish dates, SEO and Open Graph metadata, canonical URLs, and Ghost slugs (preserved as Payload <code>slug</code> fields).</p>
+    </div>
+    <div class="note">
+      <span class="lbl">Why this route</span>
+      <p>Ghost parser already exists from ghost2astro. Ghost's export format is standardized. Payload runs locally on SQLite with no cloud accounts needed. The REST API and Local API give a clean programmatic destination. The audience overlap with ghost2astro users is exact — some want a static site, some want a headless CMS, and the same export file feeds both.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s02">
+    <h2><span class="num">02</span>Extraction</h2>
+    <p>Extraction is <strong>identical</strong> to the ghost2astro JSON export path. Portage reads the <code>db[0].data</code> tables from a <code>ghost-export.json</code> file produced by <code>Settings → Migration → Export</code>.</p>
+    <p>The Content API path (live site) is not supported for this route — the Payload destination requires the full export because it carries drafts, email-only posts, and internal tags that the Content API omits.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">extract · json export</span><span class="meta">bash</span></div>
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> ghost \
+    <span class="fl">--export</span> ./ghost-export.json <span class="fl">--to</span> ./payload-project
+<span class="out">→ 142 posts · 6 pages · 38 tags · 4 authors · 318 images referenced</span></pre>
+    </div>
+    <h3>Tables read</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Ghost table</th><th>Records</th><th>Used for</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">posts</span></td><td>posts + pages</td><td>Posts and pages collections (separated by <code>type</code> field).</td></tr>
+          <tr><td><span class="gf">posts_tags</span></td><td>join rows</td><td>Post → tag relationships.</td></tr>
+          <tr><td><span class="gf">posts_authors</span></td><td>join rows</td><td>Post → author relationships.</td></tr>
+          <tr><td><span class="gf">tags</span></td><td>38</td><td>Tags collection. Internal <code>#</code> tags filtered.</td></tr>
+          <tr><td><span class="gf">users</span></td><td>4</td><td>Authors collection. Profile images extracted.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <span class="lbl">Shared parser</span>
+      <p>The extract phase delegates to the same Ghost JSON parser used by ghost2astro. If that parser is later extended (Content API support, Admin API support), ghost2payload inherits the improvement with no additional work.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s03">
+    <h2><span class="num">03</span>Content mapping</h2>
+    <p>Ghost fields map to <strong>Payload collection fields</strong> instead of Astro frontmatter. The key difference from ghost2astro: relationships are first-class — <code>tags</code> and <code>authors</code> become <strong>relationship fields</strong> pointing at their own collections, not string arrays in frontmatter.</p>
+    <h3>Posts collection</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Ghost field</th><th>Type</th><th></th><th>Payload field</th><th>Payload type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">title</span></td><td><span class="ty">string</span></td><td class="arrowcell">→</td><td><span class="af">title</span></td><td>text</td><td>Required.</td></tr>
+          <tr><td><span class="gf">slug</span></td><td><span class="ty">string</span></td><td class="arrowcell">→</td><td><span class="af">slug</span></td><td>text</td><td>Unique. Used for URL routing.</td></tr>
+          <tr><td><span class="gf">custom_excerpt</span></td><td><span class="ty">string</span></td><td class="arrowcell">→</td><td><span class="af">excerpt</span></td><td>text</td><td>Falls back to generated <code>excerpt</code>.</td></tr>
+          <tr><td><span class="gf">lexical · html</span></td><td><span class="ty">richtext</span></td><td class="arrowcell">→</td><td><span class="af">content</span></td><td>richText</td><td>Lexical preferred — see §04.</td></tr>
+          <tr><td><span class="gf">feature_image</span></td><td><span class="ty">url</span></td><td class="arrowcell">→</td><td><span class="af">featureImage</span></td><td>upload</td><td>Relationship to media — see §05.</td></tr>
+          <tr><td><span class="gf">feature_image_alt</span></td><td><span class="ty">string</span></td><td class="arrowcell">→</td><td><span class="af">featureImageAlt</span></td><td>text</td><td>Ghost 5+.</td></tr>
+          <tr><td><span class="gf">feature_image_caption</span></td><td><span class="ty">string</span></td><td class="arrowcell">→</td><td><span class="af">featureImageCaption</span></td><td>text</td><td>HTML stripped.</td></tr>
+          <tr><td><span class="gf">published_at</span></td><td><span class="ty">date</span></td><td class="arrowcell">→</td><td><span class="af">publishedAt</span></td><td>date</td><td>ISO 8601.</td></tr>
+          <tr><td><span class="gf">updated_at</span></td><td><span class="ty">date</span></td><td class="arrowcell">→</td><td><span class="af">updatedAt</span></td><td>date</td><td>Omitted if equal to publishedAt.</td></tr>
+          <tr><td><span class="gf">tags[]</span></td><td><span class="ty">join table</span></td><td class="arrowcell">→</td><td><span class="af">tags</span></td><td>relationship</td><td>Has-many to <code>tags</code> collection.</td></tr>
+          <tr><td><span class="gf">primary_author · authors[]</span></td><td><span class="ty">join table</span></td><td class="arrowcell">→</td><td><span class="af">authors</span></td><td>relationship</td><td>Has-many to <code>authors</code> collection. Primary first.</td></tr>
+          <tr><td><span class="gf">meta_title</span></td><td><span class="ty">string</span></td><td class="arrowcell">→</td><td><span class="af">seo.title</span></td><td>text (group)</td><td>Defaults to <code>title</code>.</td></tr>
+          <tr><td><span class="gf">meta_description</span></td><td><span class="ty">string</span></td><td class="arrowcell">→</td><td><span class="af">seo.description</span></td><td>text (group)</td><td>Defaults to <code>excerpt</code>.</td></tr>
+          <tr><td><span class="gf">og_* · twitter_*</span></td><td><span class="ty">mixed</span></td><td class="arrowcell">→</td><td><span class="af">seo.openGraph · seo.twitter</span></td><td>group</td><td>Image fields → media relationship.</td></tr>
+          <tr><td><span class="gf">canonical_url</span></td><td><span class="ty">url</span></td><td class="arrowcell">→</td><td><span class="af">canonicalUrl</span></td><td>text</td><td>Preserves cross-posted canonicals.</td></tr>
+          <tr><td><span class="gf">featured</span></td><td><span class="ty">boolean</span></td><td class="arrowcell">→</td><td><span class="af">featured</span></td><td>checkbox</td><td></td></tr>
+          <tr><td><span class="gf">visibility</span></td><td><span class="ty">enum</span></td><td class="arrowcell">→</td><td><span class="af">visibility</span></td><td>select</td><td><code>public</code>, <code>members</code>, <code>paid</code>.</td></tr>
+          <tr><td><span class="gf">status</span></td><td><span class="ty">enum</span></td><td class="arrowcell">→</td><td><span class="af">_status</span></td><td>select</td><td><code>draft</code> → draft; <code>published</code> → published.</td></tr>
+          <tr><td><span class="gf">type</span></td><td><span class="ty">enum</span></td><td class="arrowcell">→</td><td><span class="af">(collection)</span></td><td>—</td><td><code>post</code> → posts collection; <code>page</code> → pages collection.</td></tr>
+          <tr><td><span class="gf">codeinjection_head · _foot</span></td><td><span class="ty">string</span></td><td class="arrowcell">→</td><td><span class="af">ghost.codeInjection</span></td><td>group (json)</td><td>Carried for reference, never executed.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Pages collection</h3>
+    <p>Same schema as posts, minus <code>tags</code> and <code>featured</code>. Ghost pages are identified by <code>type: 'page'</code> in the export.</p>
+    <h3>Tags collection</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Ghost field</th><th></th><th>Payload field</th><th>Payload type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">name</span></td><td class="arrowcell">→</td><td><span class="af">name</span></td><td>text</td><td>Required.</td></tr>
+          <tr><td><span class="gf">slug</span></td><td class="arrowcell">→</td><td><span class="af">slug</span></td><td>text</td><td>Unique.</td></tr>
+          <tr><td><span class="gf">description</span></td><td class="arrowcell">→</td><td><span class="af">description</span></td><td>text</td><td>Optional.</td></tr>
+          <tr><td><span class="gf">feature_image</span></td><td class="arrowcell">→</td><td><span class="af">featureImage</span></td><td>upload</td><td>Relationship to media.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Authors collection</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Ghost field</th><th></th><th>Payload field</th><th>Payload type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">name</span></td><td class="arrowcell">→</td><td><span class="af">name</span></td><td>text</td><td>Required.</td></tr>
+          <tr><td><span class="gf">slug</span></td><td class="arrowcell">→</td><td><span class="af">slug</span></td><td>text</td><td>Unique.</td></tr>
+          <tr><td><span class="gf">bio</span></td><td class="arrowcell">→</td><td><span class="af">bio</span></td><td>richText</td><td>HTML bio converted.</td></tr>
+          <tr><td><span class="gf">profile_image</span></td><td class="arrowcell">→</td><td><span class="af">profileImage</span></td><td>upload</td><td>Relationship to media.</td></tr>
+          <tr><td><span class="gf">website</span></td><td class="arrowcell">→</td><td><span class="af">website</span></td><td>text</td><td></td></tr>
+          <tr><td><span class="gf">location</span></td><td class="arrowcell">→</td><td><span class="af">location</span></td><td>text</td><td></td></tr>
+          <tr><td><span class="gf">facebook</span></td><td class="arrowcell">→</td><td><span class="af">facebook</span></td><td>text</td><td>Username only.</td></tr>
+          <tr><td><span class="gf">twitter</span></td><td class="arrowcell">→</td><td><span class="af">twitter</span></td><td>text</td><td>Username only.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Media collection</h3>
+    <p>A <strong>upload-enabled</strong> collection that stores downloaded Ghost images. Every image (feature images, inline images, profile images) is uploaded here via the Local API <code>filePath</code> property, then referenced by relationship from posts, tags, and authors.</p>
+  </section>
+
+  <section class="spec-sec" id="s04">
+    <h2><span class="num">04</span>Content transforms</h2>
+    <p>Ghost stores body content as <strong>Lexical</strong> (Ghost 5) or <strong>Mobiledoc</strong> (Ghost 4 and earlier), and also exposes rendered <code>html</code>. Payload 3.x uses Lexical as its rich text editor — making Ghost 5 Lexical content a near-identity transform.</p>
+    <h3>A · Ghost Lexical → Payload Lexical (preferred)</h3>
+    <p>Both Ghost and Payload use the <a href="https://lexical.dev/" target="_blank" rel="noopener">Lexical</a> editor framework. Ghost's Lexical JSON and Payload's Lexical JSON share the same node types for core content (paragraphs, headings, lists, links, images). The transform is a field-level mapping of Ghost-specific nodes to Payload blocks.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Ghost Lexical node</th><th></th><th>Payload target</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">TextNode · HeadingNode</span></td><td class="arrowcell">→</td><td>Native Lexical</td><td>Pass-through.</td></tr>
+          <tr><td><span class="gf">ListNode · ListItemNode</span></td><td class="arrowcell">→</td><td>Native Lexical</td><td>Pass-through.</td></tr>
+          <tr><td><span class="gf">LinkNode</span></td><td class="arrowcell">→</td><td>Native Lexical LinkNode</td><td>Internal links rewritten — see §06.</td></tr>
+          <tr><td><span class="gf">ImageNode</span></td><td class="arrowcell">→</td><td>Upload block</td><td>Src → media relationship. Inline → block.</td></tr>
+          <tr><td><span class="gf">codeblock</span></td><td class="arrowcell">→</td><td>Code block</td><td>Language preserved.</td></tr>
+          <tr><td><span class="gf">callout</span></td><td class="arrowcell">→</td><td>Custom block</td><td>Callout block definition scaffolded.</td></tr>
+          <tr><td><span class="gf">toggle</span></td><td class="arrowcell">→</td><td>Custom block</td><td>Details/summary block scaffolded.</td></tr>
+          <tr><td><span class="gf">bookmark</span></td><td class="arrowcell">→</td><td>Custom block</td><td>OG metadata fetched, stored as block data.</td></tr>
+          <tr><td><span class="gf">gallery</span></td><td class="arrowcell">→</td><td>Custom block</td><td>Image array → media relationships.</td></tr>
+          <tr><td><span class="gf">embed</span></td><td class="arrowcell">→</td><td>Custom block</td><td>URL preserved, embed block scaffolded.</td></tr>
+          <tr><td><span class="gf">html</span></td><td class="arrowcell">→</td><td>HTML block</td><td>Passthrough; not executed by Payload.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>B · Mobiledoc → Payload Lexical</h3>
+    <p>Ghost 4 exports use Mobiledoc. Portage converts Mobiledoc to Lexical JSON before writing to Payload. The conversion follows the same node mapping as above; Mobiledoc sections and atoms are translated to Lexical nodes and blocks.</p>
+    <h3>C · HTML fallback</h3>
+    <p>If neither Lexical nor Mobiledoc can be parsed for a given post, the rendered <code>html</code> field is stored in a separate <code>htmlContent</code> text field on the post. This ensures no content is silently dropped, but it is not editable in Payload's rich text editor. A warning is logged in the manifest.</p>
+    <div class="note">
+      <span class="lbl">Choosing a content strategy</span>
+      <p>Use <code>--content lexical</code> (default) for Ghost 5 exports — near-lossless content transfer with editable rich text in Payload's admin. Use <code>--content html</code> to store rendered HTML in a text field if Lexical node compatibility is uncertain for your content.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s05">
+    <h2><span class="num">05</span>Assets</h2>
+    <p>Ghost serves images from <code>/content/images/YYYY/MM/</code>, often with generated size variants (<code>/size/w600/</code>) and a <code>__GHOST_URL__</code> placeholder in exports. Instead of writing images to <code>src/assets/</code> or <code>public/</code>, Portage downloads them and <strong>uploads them into Payload's media collection</strong> via the Local API.</p>
+    <h3>Download pipeline</h3>
+    <ul>
+      <li><strong>Fetch originals</strong> — strip <code>/size/</code> variants; download the full-resolution source. Payload handles responsive sizing via its own <code>imageSizes</code> config.</li>
+      <li><strong>Resolve <code>__GHOST_URL__</code></strong> — replaced with the Ghost site root URL so images are fetchable.</li>
+      <li><strong>Dedupe by content hash</strong> — each unique image is fetched once. Duplicate references point at the same media document.</li>
+      <li><strong>External images</strong> (e.g. Unsplash) — left remote by default, or downloaded and rehosted with <code>--images localize-external</code>.</li>
+    </ul>
+    <h3>Upload via Local API</h3>
+    <p>The seed script uploads each image using <code>payload.create()</code> with the <code>filePath</code> option, which is Payload's native way to ingest local files:</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">media upload · local api</span><span class="meta">typescript</span></div>
+      <pre is:raw"><span class="k">const</span> media = <span class="k">await</span> payload.create({
+  collection: <span class="s">'media'</span>,
+  data: { alt: <span class="s">'Feature image'</span> },
+  filePath: path.resolve(<span class="s">'./media/walled-garden.jpg'</span>),
+});</pre>
+    </div>
+    <p>Once the media document exists, post and author documents reference it by ID in their <code>upload</code> fields:</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">post with feature image</span><span class="meta">typescript</span></div>
+      <pre is:raw"><span class="k">const</span> post = <span class="k">await</span> payload.create({
+  collection: <span class="s">'posts'</span>,
+  data: {
+    title: <span class="s">'Leaving the Walled Garden'</span>,
+    featureImage: media.id,  <span class="c">// relationship to media document</span>
+    <span class="c">// …</span>
+  },
+});</pre>
+    </div>
+    <div class="note">
+      <span class="lbl">Media collection config</span>
+      <p>The media collection must have <code>upload: true</code> (or an <code>upload</code> config with <code>imageSizes</code>) in your <code>payload.config.ts</code>. The paired Astro + Payload template ships with this pre-configured.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s06">
+    <h2><span class="num">06</span>Routes &amp; redirects</h2>
+    <p>Ghost's URL structure is preserved by Payload's <code>slug</code> field on each collection. Payload generates REST endpoints at <code>/api/posts</code>, <code>/api/pages</code>, etc., but the <strong>public-facing URLs</strong> depend on how the Astro frontend queries Payload. Portage ensures the slug data is correct; URL routing is the Astro layer's responsibility.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Ghost route</th><th></th><th>Payload field</th><th>Frontend routing</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">/&lcub;slug&rcub;/</span></td><td class="arrowcell">→</td><td><span class="af">posts.slug</span></td><td>Astro dynamic route <code>[slug].astro</code></td></tr>
+          <tr><td><span class="gf">/&lcub;page-slug&rcub;/</span></td><td class="arrowcell">→</td><td><span class="af">pages.slug</span></td><td>Astro dynamic route</td></tr>
+          <tr><td><span class="gf">/tag/&lcub;slug&rcub;/</span></td><td class="arrowcell">→</td><td><span class="af">tags.slug</span></td><td>Tag query + Astro route</td></tr>
+          <tr><td><span class="gf">/author/&lcub;slug&rcub;/</span></td><td class="arrowcell">→</td><td><span class="af">authors.slug</span></td><td>Author query + Astro route</td></tr>
+          <tr><td><span class="gf">/rss/</span></td><td class="arrowcell">→</td><td><span class="af">—</span></td><td><code>@astrojs/rss</code> reading from Payload API</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li><strong>Internal link rewriting</strong> — <code>__GHOST_URL__</code> placeholders and absolute Ghost site URLs in post bodies are rewritten to relative paths or the new Astro site URL.</li>
+      <li><strong>Redirect map</strong> — if any slugs change during the migration (e.g. de-duplicating collisions), the old → new mapping is written to <code>portage-redirects.json</code> for the Astro frontend to consume.</li>
+      <li><strong>Trailing slashes</strong> — Ghost uses them. The Astro frontend should set <code>trailingSlash: 'always'</code> in <code>astro.config.mjs</code>.</li>
+    </ul>
+  </section>
+
+  <section class="spec-sec" id="s07">
+    <h2><span class="num">07</span>Out of scope</h2>
+    <p>Same scope boundaries as ghost2astro. Portage moves <strong>content</strong>. Ghost's platform features do not map to Payload or a static Astro frontend.</p>
+    <ul>
+      <li><strong>Members &amp; subscribers</strong> — exported to a separate <code>members.csv</code> for portability, but Payload does not have a built-in member system. Auth, sign-up, and gating are yours to implement.</li>
+      <li><strong>Paid tiers &amp; Stripe</strong> — billing relationships cannot be carried; reconnect at your new provider.</li>
+      <li><strong>Email newsletters</strong> — past issues migrate as posts; sending and delivery do not.</li>
+      <li><strong>Native comments</strong> — not exported by Ghost; use a third-party system (e.g. Giscus) if needed.</li>
+      <li><strong>Theme</strong> — Ghost Handlebars templates are not converted. You rebuild presentation in Astro querying Payload's API.</li>
+      <li><strong>Integrations, webhooks, API keys, staff accounts</strong> — not transferable; code injection is carried into a <code>ghost.codeInjection</code> JSON field for reference but never executed.</li>
+      <li><strong>Payload admin customization</strong> — the seed script creates data only. Admin panels, custom components, and access control rules are part of the paired template, not the migration.</li>
+    </ul>
+    <div class="note warn">
+      <span class="lbl">Member-only content</span>
+      <p>Posts with <code>visibility: members</code> or <code>paid</code> are migrated with the <code>visibility</code> field set to <code>members</code> or <code>paid</code>. Payload access control rules can gate these at the API level, but the rules themselves must be configured in <code>payload.config.ts</code> after migration.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s08">
+    <h2><span class="num">08</span>Edge cases</h2>
+    <ul>
+      <li><strong>Lexical compatibility</strong> — Ghost and Payload both use Lexical, but Ghost adds custom node types (cards). Nodes that don't map to native Payload Lexical nodes are converted to custom blocks. If a node can't be converted, the post falls back to <code>htmlContent</code> and a warning is logged.</li>
+      <li><strong>Mobiledoc posts</strong> — Ghost 4 exports use Mobiledoc. Portage converts to Lexical before writing to Payload. Complex Mobiledoc atoms may degrade to HTML blocks.</li>
+      <li><strong>Internal tags</strong> — tags whose names start with <code>#</code> are Ghost-internal; they're stripped from the public tags collection and preserved in a <code>ghost.internalTags</code> JSON field on the post.</li>
+      <li><strong>Drafts &amp; scheduled</strong> — included by default (unlike ghost2astro, which excludes them). Drafts are written with <code>_status: 'draft'</code>. Scheduled posts become drafts with a <code>publishedAt</code> set to the scheduled date.</li>
+      <li><strong>Multiple authors</strong> — the <code>authors</code> relationship is an array; primary author first. Ghost's <code>primary_author</code> is redundant in Payload (the first relationship entry is primary).</li>
+      <li><strong>Slug collisions</strong> — a post and a page sharing a slug are in different collections, so no collision occurs at the Payload level. Same-slug tags and authors are suffixed (<code>tag-name-2</code>) and logged in the manifest.</li>
+      <li><strong>Email-only posts</strong> — included by default since the JSON export carries them. They are written with <code>visibility: 'email'</code> and <code>_status: 'draft'</code>.</li>
+      <li><strong><code>__GHOST_URL__</code></strong> — the placeholder appears in both image URLs and internal links. Portage resolves it using the <code>--ghost-url</code> flag value (or infers it from the export metadata).</li>
+      <li><strong>Relationship ordering</strong> — the seed script must create tags, authors, and media <strong>before</strong> posts, because posts reference them by ID. The load phase handles this ordering automatically.</li>
+      <li><strong>Large exports</strong> — Ghost exports with thousands of posts may exceed Payload's create-rate limits. The seed script inserts in batches of 50 with a configurable delay (<code>--batch-size</code>, <code>--batch-delay</code>).</li>
+    </ul>
+  </section>
+
+  <section class="spec-sec" id="s09">
+    <h2><span class="num">09</span>Output</h2>
+    <p>A Payload project with a generated seed script, a <code>media/</code> directory of downloaded images, and the manifest. Running the seed script populates the Payload database.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">project tree</span><span class="meta">output</span></div>
+      <pre is:raw>payload-project/
+├── src/
+│   ├── payload.config.ts     <span class="c">← Collection configs (posts, pages, tags, authors, media)</span>
+│   ├── seed.ts               <span class="c">← Generated by portage load</span>
+│   └── payload-types.ts      <span class="c">← Auto-generated by Payload</span>
+├── media/                    <span class="c">← Downloaded Ghost images (consumed by seed script)</span>
+│   ├── walled-garden.jpg
+│   └── <span class="c">… 260 more</span>
+├── portage.manifest.json     <span class="c">← extract / transform / load ledger</span>
+└── .env                      <span class="c">← DATABASE_URL for SQLite</span></pre>
+    </div>
+    <h3>Payload collection configs</h3>
+    <div class="code">
+      <div class="code-bar"><span class="name">src/payload.config.ts (collections excerpt)</span><span class="meta">typescript</span></div>
+      <pre is:raw"><span class="k">import</span> { buildConfig } <span class="k">from</span> <span class="s">'payload'</span>;
+<span class="k">import</span> { sqliteAdapter } <span class="k">from</span> <span class="s">'@payloadcms/db-sqlite'</span>;
+
+<span class="k">export default</span> buildConfig({
+  collections: [
+    {
+      slug: <span class="s">'posts'</span>,
+      fields: [
+        { name: <span class="s">'title'</span>, type: <span class="s">'text'</span>, required: <span class="k">true</span> },
+        { name: <span class="s">'slug'</span>, type: <span class="s">'text'</span>, required: <span class="k">true</span>, unique: <span class="k">true</span> },
+        { name: <span class="s">'content'</span>, type: <span class="s">'richText'</span> },
+        { name: <span class="s">'excerpt'</span>, type: <span class="s">'text'</span> },
+        { name: <span class="s">'featureImage'</span>, type: <span class="s">'upload'</span>, relationTo: <span class="s">'media'</span> },
+        { name: <span class="s">'featureImageAlt'</span>, type: <span class="s">'text'</span> },
+        { name: <span class="s">'publishedAt'</span>, type: <span class="s">'date'</span> },
+        { name: <span class="s">'tags'</span>, type: <span class="s">'relationship'</span>, relationTo: <span class="s">'tags'</span>, hasMany: <span class="k">true</span> },
+        { name: <span class="s">'authors'</span>, type: <span class="s">'relationship'</span>, relationTo: <span class="s">'authors'</span>, hasMany: <span class="k">true</span> },
+        {
+          name: <span class="s">'seo'</span>, type: <span class="s">'group'</span>, fields: [
+            { name: <span class="s">'title'</span>, type: <span class="s">'text'</span> },
+            { name: <span class="s">'description'</span>, type: <span class="s">'text'</span> },
+          ],
+        },
+        { name: <span class="s">'canonicalUrl'</span>, type: <span class="s">'text'</span> },
+        { name: <span class="s">'featured'</span>, type: <span class="s">'checkbox'</span> },
+        { name: <span class="s">'visibility'</span>, type: <span class="s">'select'</span>, options: [<span class="s">'public'</span>, <span class="s">'members'</span>, <span class="s">'paid'</span>] },
+      ],
+    },
+    {
+      slug: <span class="s">'pages'</span>,
+      fields: [
+        { name: <span class="s">'title'</span>, type: <span class="s">'text'</span>, required: <span class="k">true</span> },
+        { name: <span class="s">'slug'</span>, type: <span class="s">'text'</span>, required: <span class="k">true</span>, unique: <span class="k">true</span> },
+        { name: <span class="s">'content'</span>, type: <span class="s">'richText'</span> },
+        { name: <span class="s">'featureImage'</span>, type: <span class="s">'upload'</span>, relationTo: <span class="s">'media'</span> },
+        { name: <span class="s">'publishedAt'</span>, type: <span class="s">'date'</span> },
+        { name: <span class="s">'authors'</span>, type: <span class="s">'relationship'</span>, relationTo: <span class="s">'authors'</span>, hasMany: <span class="k">true</span> },
+      ],
+    },
+    {
+      slug: <span class="s">'tags'</span>,
+      fields: [
+        { name: <span class="s">'name'</span>, type: <span class="s">'text'</span>, required: <span class="k">true</span> },
+        { name: <span class="s">'slug'</span>, type: <span class="s">'text'</span>, required: <span class="k">true</span>, unique: <span class="k">true</span> },
+        { name: <span class="s">'description'</span>, type: <span class="s">'text'</span> },
+        { name: <span class="s">'featureImage'</span>, type: <span class="s">'upload'</span>, relationTo: <span class="s">'media'</span> },
+      ],
+    },
+    {
+      slug: <span class="s">'authors'</span>,
+      fields: [
+        { name: <span class="s">'name'</span>, type: <span class="s">'text'</span>, required: <span class="k">true</span> },
+        { name: <span class="s">'slug'</span>, type: <span class="s">'text'</span>, required: <span class="k">true</span>, unique: <span class="k">true</span> },
+        { name: <span class="s">'bio'</span>, type: <span class="s">'richText'</span> },
+        { name: <span class="s">'profileImage'</span>, type: <span class="s">'upload'</span>, relationTo: <span class="s">'media'</span> },
+        { name: <span class="s">'website'</span>, type: <span class="s">'text'</span> },
+      ],
+    },
+    {
+      slug: <span class="s">'media'</span>,
+      upload: <span class="k">true</span>,
+      fields: [
+        { name: <span class="s">'alt'</span>, type: <span class="s">'text'</span> },
+      ],
+    },
+  ],
+  db: sqliteAdapter({
+    client: { url: process.env.DATABASE_URL },
+  }),
+});</pre>
+    </div>
+    <h3>Seed script (generated)</h3>
+    <div class="code">
+      <div class="code-bar"><span class="name">src/seed.ts (excerpt)</span><span class="meta">typescript</span></div>
+      <pre is:raw"><span class="k">import</span> { getPayload } <span class="k">from</span> <span class="s">'payload'</span>;
+<span class="k">import</span> config <span class="k">from</span> <span class="s">'@payload-config'</span>;
+<span class="k">import</span> path <span class="k">from</span> <span class="s">'node:path'</span>;
+
+<span class="k">const</span> payload = <span class="k">await</span> getPayload({ config });
+
+<span class="c">// 1. Create tags (relationship targets first)</span>
+<span class="k">const</span> tagMap: Record&lt;string, <span class="ty">string</span>&gt; = {};
+<span class="k">for</span> (<span class="k">const</span> t <span class="k">of</span> tags) {
+  <span class="k">const</span> doc = <span class="k">await</span> payload.create({
+    collection: <span class="s">'tags'</span>,
+    data: { name: t.name, slug: t.slug },
+    overrideAccess: <span class="k">true</span>,
+  });
+  tagMap[t.id] = doc.id;
+}
+
+<span class="c">// 2. Create media (upload images)</span>
+<span class="k">const</span> mediaMap: Record&lt;string, <span class="ty">string</span>&gt; = {};
+<span class="k">for</span> (<span class="k">const</span> img <span class="k">of</span> images) {
+  <span class="k">const</span> doc = <span class="k">await</span> payload.create({
+    collection: <span class="s">'media'</span>,
+    data: { alt: img.alt },
+    filePath: path.resolve(<span class="s">'./media/'</span>, img.filename),
+    overrideAccess: <span class="k">true</span>,
+  });
+  mediaMap[img.ghostUrl] = doc.id;
+}
+
+<span class="c">// 3. Create authors</span>
+<span class="k">const</span> authorMap: Record&lt;string, <span class="ty">string</span>&gt; = {};
+<span class="k">for</span> (<span class="k">const</span> a <span class="k">of</span> authors) {
+  <span class="k">const</span> doc = <span class="k">await</span> payload.create({
+    collection: <span class="s">'authors'</span>,
+    data: {
+      name: a.name, slug: a.slug,
+      profileImage: a.profileImage ? mediaMap[a.profileImage] : undefined,
+    },
+    overrideAccess: <span class="k">true</span>,
+  });
+  authorMap[a.id] = doc.id;
+}
+
+<span class="c">// 4. Create posts (references resolved)</span>
+<span class="k">for</span> (<span class="k">const</span> p <span class="k">of</span> posts) {
+  <span class="k">await</span> payload.create({
+    collection: <span class="s">'posts'</span>,
+    data: {
+      title: p.title, slug: p.slug,
+      content: p.lexical,  <span class="c">// Lexical JSON</span>
+      featureImage: p.featureImage ? mediaMap[p.featureImage] : undefined,
+      publishedAt: p.publishedAt,
+      tags: p.tagIds.map((id: <span class="ty">string</span>) => tagMap[id]),
+      authors: p.authorIds.map((id: <span class="ty">string</span>) => authorMap[id]),
+    },
+    overrideAccess: <span class="k">true</span>,
+  });
+}
+
+console.log(<span class="s">'Seed complete.'</span>);</pre>
+    </div>
+    <div class="note">
+      <span class="lbl">Running the seed</span>
+      <p>Execute with <code>payload run src/seed.ts</code>. This loads environment variables the same way Next.js does and initializes tsx for TypeScript execution. Payload must have been started at least once to push the schema to SQLite.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s10">
+    <h2><span class="num">10</span>CLI</h2>
+    <p>Three stages, run in order. The extract and transform stages are shared with ghost2astro. The load stage diverges: it generates a seed script instead of writing Markdown files.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">portage · ghost → payload</span><span class="meta">bash</span></div>
+      <pre is:raw"><span class="pr">$</span> npx portage extract <span class="fl">--from</span> ghost <span class="fl">--export</span> ./ghost-export.json <span class="fl">--to</span> ./payload-project
+<span class="pr">$</span> npx portage transform <span class="fl">--target</span> payload
+<span class="pr">$</span> npx portage load <span class="fl">--method</span> seed <span class="fl">--images</span> download</pre>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Values</th><th>Default</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">--export</span></td><td><span class="ty">path</span></td><td>—</td><td>Ghost JSON export file (required).</td></tr>
+          <tr><td><span class="gf">--target</span></td><td><span class="ty">payload</span></td><td><span class="ty">astro</span></td><td>Destination platform. <code>payload</code> triggers seed script generation.</td></tr>
+          <tr><td><span class="gf">--method</span></td><td><span class="ty">seed · rest</span></td><td><span class="ty">seed</span></td><td>Load method. <code>seed</code> generates <code>src/seed.ts</code>. <code>rest</code> pushes via <code>POST /api/{collection}</code>.</td></tr>
+          <tr><td><span class="gf">--payload-url</span></td><td><span class="ty">url</span></td><td><span class="ty">http://localhost:3000</span></td><td>Payload REST API base URL (rest method only).</td></tr>
+          <tr><td><span class="gf">--ghost-url</span></td><td><span class="ty">url</span></td><td>—</td><td>Ghost site URL for resolving <code>__GHOST_URL__</code> placeholders.</td></tr>
+          <tr><td><span class="gf">--content</span></td><td><span class="ty">lexical · html</span></td><td><span class="ty">lexical</span></td><td>Body content format for Payload.</td></tr>
+          <tr><td><span class="gf">--images</span></td><td><span class="ty">download · localize-external</span></td><td><span class="ty">download</span></td><td>Download images to <code>media/</code> for Local API upload.</td></tr>
+          <tr><td><span class="gf">--batch-size</span></td><td><span class="ty">number</span></td><td><span class="ty">50</span></td><td>Documents per batch (rest method).</td></tr>
+          <tr><td><span class="gf">--batch-delay</span></td><td><span class="ty">ms</span></td><td><span class="ty">100</span></td><td>Delay between batches (rest method).</td></tr>
+          <tr><td><span class="gf">--include-drafts</span></td><td><span class="ty">flag</span></td><td><span class="ty">on</span></td><td>Drafts included by default for payload target.</td></tr>
+          <tr><td><span class="gf">--dry-run</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Plan &amp; diff only; write nothing.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Seed vs. REST</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th></th><th>Seed script</th><th>REST API push</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Requires running server</strong></td><td>No — runs against SQLite directly</td><td>Yes — Payload must be listening</td></tr>
+          <tr><td><strong>File uploads</strong></td><td>Native via <code>filePath</code></td><td>Multipart <code>FormData</code></td></tr>
+          <tr><td><strong>Access control</strong></td><td>Bypassed (<code>overrideAccess: true</code>)</td><td>Needs API key or admin credentials</td></tr>
+          <tr><td><strong>Speed</strong></td><td>Fast — no HTTP overhead</td><td>Slower — per-request HTTP round-trip</td></tr>
+          <tr><td><strong>Best for</strong></td><td>Initial migration, local development</td><td>Remote Payload instances, CI/CD</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s11">
+    <h2><span class="num">11</span>Verification</h2>
+    <p>Verification is different from the Astro routes because the destination is a running CMS, not a file tree. You verify by checking Payload's database and admin panel.</p>
+    <ul>
+      <li><strong>Dry-run first</strong> — <code>--dry-run</code> prints the full plan: how many documents in each collection, which images will be downloaded, which relationships will be wired. Nothing is written.</li>
+      <li><strong>Manifest ledger</strong> — <code>portage.manifest.json</code> records every source entity, its Ghost ID, the Payload collection it targets, and the transform applied.</li>
+      <li><strong>Count reconciliation</strong> — extract counts are compared against <code>payload.find()</code> counts after seeding. Any delta (skipped, failed, HTML-fallback) is listed explicitly.</li>
+      <li><strong>Admin spot-check</strong> — open <code>http://localhost:3000/admin</code>, navigate to Posts, verify titles, slugs, tags, authors, and feature images render correctly.</li>
+      <li><strong>Relationship integrity</strong> — query a post's <code>tags</code> and <code>authors</code> at <code>depth: 1</code> to confirm relationships resolved correctly.</li>
+      <li><strong>Image rendering</strong> — verify feature images display in the admin list view and on the post edit screen. Check <code>/media/</code> serves image files.</li>
+    </ul>
+    <div class="code">
+      <div class="code-bar"><span class="name">verification · local api</span><span class="meta">typescript</span></div>
+      <pre is:raw"><span class="k">const</span> result = <span class="k">await</span> payload.find({
+  collection: <span class="s">'posts'</span>,
+  depth: 1,
+  pagination: <span class="k">false</span>,
+});
+
+console.log(<span class="s">`Posts in Payload: ${result.docs.length}`</span>);
+console.log(<span class="s">`Posts with tags: ${result.docs.filter(p => p.tags?.length).length}`</span>);
+console.log(<span class="s">`Posts with feature image: ${result.docs.filter(p => p.featureImage).length}`</span>);</pre>
+    </div>
+    <div class="note">
+      <span class="lbl">Paired template</span>
+      <p>The Astro + Payload template from Salish Sea Creatives includes a pre-configured Payload instance (SQLite, collection configs, admin panel) and an Astro frontend that queries Payload's Local API. Spin it up, run the seed script, and verify content in the admin panel. No cloud accounts needed.</p>
+    </div>
+  </section>
+</SpecLayout>
