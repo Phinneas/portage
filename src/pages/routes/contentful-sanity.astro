@@ -1,0 +1,368 @@
+---
+import SpecLayout from '../../layouts/SpecLayout.astro';
+
+const meta = [
+  { k: 'Source', v: 'Contentful (CDA + CMA)', cy: true },
+  { k: 'Method', v: 'Content Delivery API + export', cy: true },
+  { k: 'Output', v: 'Sanity NDJSON · dataset import' },
+  { k: 'Target', v: 'Sanity Content Lake', cy: true },
+  { k: 'Spec rev', v: '2026.06 · r1 · beta' },
+];
+
+const toc = [
+  { id: 's01', num: '01', label: 'Overview' },
+  { id: 's02', num: '02', label: 'Extraction' },
+  { id: 's03', num: '03', label: 'Content model mapping' },
+  { id: 's04', num: '04', label: 'Content transforms' },
+  { id: 's05', num: '05', label: 'Assets' },
+  { id: 's06', num: '06', label: 'References & relationships' },
+  { id: 's07', num: '07', label: 'Out of scope' },
+  { id: 's08', num: '08', label: 'Edge cases' },
+  { id: 's09', num: '09', label: 'Output' },
+  { id: 's10', num: '10', label: 'CLI' },
+  { id: 's11', num: '11', label: 'Verification' },
+];
+---
+
+<SpecLayout
+  title="Route Spec — Contentful → Sanity · Portage"
+  description="Portage route specification: migrating a Contentful space into a Sanity dataset. Content model mapping, Rich Text to Portable Text conversion, link resolution, NDJSON generation, and CLI."
+  origin="Contentful"
+  status="beta"
+  lede="A crossing for the headless CMS user moving from Contentful to Sanity: content types mapped to Sanity schemas, Rich Text converted to Portable Text, entry links resolved into Sanity references, and assets rehosted. The hard part is the content model — every space is different, and Portage maps the structure, not just the data."
+  meta={meta}
+  toc={toc}
+>
+  <section class="spec-sec" id="s01">
+    <h2><span class="num">01</span>Overview</h2>
+    <p>This route carries a <strong>Contentful space</strong> into a <strong>Sanity dataset</strong>. It is a headless-CMS-to-headless-CMS migration — no static site, no Markdown files, no Astro content collections. The output is an NDJSON file (and a tarball of assets) that feeds directly into <code>sanity dataset import</code>.</p>
+    <p>Contentful organizes content as <strong>entries</strong> (typed by <strong>content types</strong>) connected by <strong>links</strong> (Entry links, Asset links). Sanity organizes content as <strong>documents</strong> (typed by <strong>schema types</strong>) connected by <strong>references</strong>. The structural similarity is close enough for a mechanical mapping, but the content model variance between Contentful spaces is high — no two spaces share the same content types. Portage reads the Contentful content model at extraction time and generates both the Sanity schema definitions and the NDJSON documents.</p>
+    <div class="note keep">
+      <span class="lbl">Moves intact</span>
+      <p>Content types → Sanity schemas, entries → Sanity documents, Rich Text → Portable Text, entry links → Sanity references, asset links → image/file assets, locales → Sanity localization, and all field values.</p>
+    </div>
+    <div class="note warn">
+      <span class="lbl">Beta status</span>
+      <p>This route requires two external accounts (Contentful + Sanity) for testing, and content model variance across spaces is higher than the Ghost → Payload route. Portage maps the content model mechanically, but complex validation rules, custom widgets, and app-level logic require manual review after import. This is a <strong>beta</strong> crossing — the path is charted but not yet hardened.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s02">
+    <h2><span class="num">02</span>Extraction</h2>
+    <p>Portage reads a Contentful space via two APIs and normalizes both into a single manifest.</p>
+    <h3>A · Content Delivery API (published content)</h3>
+    <p>Best for extracting published entries and assets. Read-only; needs a CDA token from <code>Settings → API keys → Add API key</code>. Portage paginates entries with <code>?include=10</code> to resolve the full link graph up to 10 levels deep.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">extract · content delivery api</span><span class="meta">bash</span></div>
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> contentful \
+    <span class="fl">--space-id</span> $SPACE_ID <span class="fl">--cda-token</span> $CDA_TOKEN \
+    <span class="fl">--to</span> ./sanity-project
+<span class="out">→ 3 content types · 142 entries · 38 assets · 2 locales</span></pre>
+    </div>
+    <h3>B · Content Management API (content model + drafts)</h3>
+    <p>The CDA does not expose the content type definitions or draft entries. Portage uses the <strong>Content Management API</strong> (CMA) with a personal access token to fetch: content type schemas (field definitions, validations, appearance settings), draft entries, and editor interfaces. The CMA token requires <code>Content Management</code> permissions.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">extract · content management api</span><span class="meta">bash</span></div>
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> contentful \
+    <span class="fl">--space-id</span> $SPACE_ID <span class="fl">--cda-token</span> $CDA_TOKEN \
+    <span class="fl">--cma-token</span> $CMA_TOKEN <span class="fl">--include-drafts</span> \
+    <span class="fl">--to</span> ./sanity-project</pre>
+    </div>
+    <h3>Data fetched</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Source</th><th>Records</th><th>Used for</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">Content Types</span></td><td>varies</td><td>Sanity schema generation — field types, validations, and display field.</td></tr>
+          <tr><td><span class="gf">Entries</span></td><td>varies</td><td>Sanity documents — one NDJSON line per entry, per locale.</td></tr>
+          <tr><td><span class="gf">Assets</span></td><td>varies</td><td>Sanity image/file assets — downloaded from <code>ctfassets.net</code> and rehosted.</td></tr>
+          <tr><td><span class="gf">Locales</span></td><td>1–many</td><td>Sanity localization — base locale + field-level translations.</td></tr>
+          <tr><td><span class="gf">Editor Interfaces</span></td><td>varies</td><td>Sanity field ordering and sidebar controls (CMA only).</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s03">
+    <h2><span class="num">03</span>Content model mapping</h2>
+    <p>Every Contentful space has a unique content model. Portage reads the content type definitions at extraction time and generates the corresponding Sanity schema. The mapping is mechanical but not trivial — Contentful and Sanity use different type systems, and some Contentful features have no direct Sanity equivalent.</p>
+    <h3>Field type mapping</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Contentful field</th><th></th><th>Sanity field</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">Symbol</span></td><td class="arrowcell">→</td><td><span class="af">string</span></td><td>Max 256 chars → no Sanity limit.</td></tr>
+          <tr><td><span class="gf">Text</span></td><td class="arrowcell">→</td><td><span class="af">text</span></td><td>Long text. Markdown editor preserved if enabled.</td></tr>
+          <tr><td><span class="gf">RichText</span></td><td class="arrowcell">→</td><td><span class="af">array</span> (Portable Text)</td><td>AST → Portable Text — see §04.</td></tr>
+          <tr><td><span class="gf">Integer</span></td><td class="arrowcell">→</td><td><span class="af">number</span></td><td></td></tr>
+          <tr><td><span class="gf">Number</span></td><td class="arrowcell">→</td><td><span class="af">number</span></td><td>Decimal precision preserved.</td></tr>
+          <tr><td><span class="gf">Date</span></td><td class="arrowcell">→</td><td><span class="af">datetime</span></td><td>ISO 8601 passthrough.</td></tr>
+          <tr><td><span class="gf">Boolean</span></td><td class="arrowcell">→</td><td><span class="af">boolean</span></td><td></td></tr>
+          <tr><td><span class="gf">Location</span></td><td class="arrowcell">→</td><td><span class="af">geopoint</span></td><td><code>{lat, lon}</code> → <code>{lat, lng}</code>.</td></tr>
+          <tr><td><span class="gf">Link (Entry)</span></td><td class="arrowcell">→</td><td><span class="af">reference</span></td><td><code>sys.id</code> → <code>_ref</code> — see §06.</td></tr>
+          <tr><td><span class="gf">Link (Asset)</span></td><td class="arrowcell">→</td><td><span class="af">image</span> or <span class="af">file</span></td><td>Asset rehosted — see §05.</td></tr>
+          <tr><td><span class="gf">Array (Symbol)</span></td><td class="arrowcell">→</td><td><span class="af">array</span> of <span class="af">string</span></td><td>Tags, categories.</td></tr>
+          <tr><td><span class="gf">Array (Link Entry)</span></td><td class="arrowcell">→</td><td><span class="af">array</span> of <span class="af">reference</span></td><td>Multiple references.</td></tr>
+          <tr><td><span class="gf">Array (Link Asset)</span></td><td class="arrowcell">→</td><td><span class="af">array</span> of <span class="af">image</span></td><td>Gallery fields.</td></tr>
+          <tr><td><span class="gf">Object (JSON)</span></td><td class="arrowcell">→</td><td><span class="af">object</span></td><td>JSON passthrough. Sub-fields not inferred.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Content type → Sanity schema</h3>
+    <p>Each Contentful content type becomes a <code>defineType()</code> in the generated Sanity schema. The content type <code>sys.id</code> becomes the Sanity <code>name</code> and <code>_type</code>. The <code>displayField</code> becomes the <code>title</code> of the schema. Validations are carried where a direct mapping exists:</p>
+    <ul>
+      <li><strong>Size validation</strong> → Sanity <code>validation: Rule =&gt; Rule.min(n).max(n)</code></li>
+      <li><strong>Range validation</strong> → Sanity <code>validation: Rule =&gt; Rule.min(n).max(n)</code></li>
+      <li><strong>Regex validation</strong> → Sanity <code>validation: Rule =&gt; Rule.regex(pattern)</code></li>
+      <li><strong>Link validation</strong> (restrict to content types) → Sanity <code>to: [{type: 'allowedType'}]</code></li>
+      <li><strong>Unique validation</strong> → Sanity <code>validation: Rule =&gt; Rule.unique()</code></li>
+    </ul>
+    <div class="note">
+      <span class="lbl">Schema generation</span>
+      <p>Portage generates a <code>sanity-schema.ts</code> file containing all <code>defineType()</code> calls. This file is importable into your <code>sanity.config.ts</code>. It is a starting point, not a final schema — you will likely rename types, add custom validation, and add preview configurations after import.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s04">
+    <h2><span class="num">04</span>Content transforms</h2>
+    <p>Contentful stores rich text as a <strong>structured AST</strong> (nodes with <code>nodeType</code>, <code>content</code>, <code>data</code>, <code>marks</code>). Sanity stores rich text as <strong>Portable Text</strong> (an array of blocks with <code>_type</code>, <code>children</code>, <code>markDefs</code>). The conversion is a recursive walk of the Contentful AST emitting Portable Text blocks.</p>
+    <h3>AST node → Portable Text mapping</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Contentful nodeType</th><th></th><th>Portable Text</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">paragraph</span></td><td class="arrowcell">→</td><td>block (style: normal)</td><td>Children carry marks.</td></tr>
+          <tr><td><span class="gf">heading-1 … heading-6</span></td><td class="arrowcell">→</td><td>block (style: h1 … h6)</td><td></td></tr>
+          <tr><td><span class="gf">unordered-list · ordered-list</span></td><td class="arrowcell">→</td><td>block (style: normal, listItem)</td><td>Sanity uses flat list items with level.</td></tr>
+          <tr><td><span class="gf">blockquote</span></td><td class="arrowcell">→</td><td>block (style: quote)</td><td></td></tr>
+          <tr><td><span class="gf">hr</span></td><td class="arrowcell">→</td><td>Custom block (divider)</td><td>Not native in Portable Text.</td></tr>
+          <tr><td><span class="gf">embedded-entry-block</span></td><td class="arrowcell">→</td><td>Custom block (reference)</td><td>Entry link → Sanity reference.</td></tr>
+          <tr><td><span class="gf">embedded-entry-inline</span></td><td class="arrowcell">→</td><td>Inline object (reference)</td><td>Inline reference in text flow.</td></tr>
+          <tr><td><span class="gf">embedded-asset-block</span></td><td class="arrowcell">→</td><td>Custom block (image)</td><td>Asset rehosted — see §05.</td></tr>
+          <tr><td><span class="gf">entry-hyperlink</span></td><td class="arrowcell">→</td><td>markDef (link + _ref)</td><td>Internal link as annotation.</td></tr>
+          <tr><td><span class="gf">hyperlink</span></td><td class="arrowcell">→</td><td>markDef (link + href)</td><td>External link as annotation.</td></tr>
+          <tr><td><span class="gf">asset-hyperlink</span></td><td class="arrowcell">→</td><td>markDef (link + asset ref)</td><td>Link to file asset.</td></tr>
+          <tr><td><span class="gf">text</span></td><td class="arrowcell">→</td><td>span (with marks)</td><td>bold, italic, underline, code → decorators.</td></tr>
+          <tr><td><span class="gf">table · table-row · table-cell</span></td><td class="arrowcell">→</td><td>Custom block (table)</td><td>Not native in Portable Text; scaffolded.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Marks → Decorators</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Contentful mark</th><th></th><th>Sanity decorator</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">bold</span></td><td class="arrowcell">→</td><td><span class="af">strong</span></td></tr>
+          <tr><td><span class="gf">italic</span></td><td class="arrowcell">→</td><td><span class="af">em</span></td></tr>
+          <tr><td><span class="gf">underline</span></td><td class="arrowcell">→</td><td><span class="af">underline</span></td></tr>
+          <tr><td><span class="gf">code</span></td><td class="arrowcell">→</td><td><span class="af">code</span></td></tr>
+          <tr><td><span class="gf">superscript · subscript</span></td><td class="arrowcell">→</td><td>Custom decorator</td><td>Not native; scaffolded in schema.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <span class="lbl">Portable Text fidelity</span>
+      <p>The conversion preserves the full semantic structure of Contentful Rich Text. Embedded entries and assets become references or custom blocks in Portable Text, so the content remains queryable and editable in Sanity Studio. Custom node types (tables, dividers) are scaffolded as Sanity custom blocks with a matching schema definition.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s05">
+    <h2><span class="num">05</span>Assets</h2>
+    <p>Contentful stores assets at <code>images.ctfassets.net</code> with URLs like <code>//images.ctfassets.net/{space}/{id}/{hash}/{filename}</code>. Contentful's Images API provides resizing and format conversion on the fly. Sanity stores assets as uploaded files referenced by document ID. The migration downloads originals and rehosts them.</p>
+    <ul>
+      <li><strong>Download originals</strong> — strip Contentful image parameters (<code>?w=600&amp;fm=webp</code>); fetch the full-resolution source. Sanity handles responsive sizing via its own image pipeline.</li>
+      <li><strong>Dedupe by URL hash</strong> — each unique asset URL is fetched once. Duplicate references point at the same Sanity asset document.</li>
+      <li><strong>Write to tarball</strong> — assets are placed alongside the NDJSON file in a directory structure compatible with <code>sanity dataset import</code> tarball format.</li>
+      <li><strong>_sanityAsset convention</strong> — in the NDJSON, image/file fields use <code>_sanityAsset: "image@file:///path/to/asset.jpg"</code> so the import tool resolves them automatically.</li>
+    </ul>
+    <div class="code">
+      <div class="code-bar"><span class="name">image field · ndjson</span><span class="meta">json</span></div>
+      <pre is:raw">{
+  "_id": "entry_abc123",
+  "_type": "blogPost",
+  "title": "A Post",
+  "featureImage": {
+    "_type": "image",
+    "_sanityAsset": "image@file:///assets/feature-abc123.jpg"
+  }
+}</pre>
+    </div>
+    <div class="note">
+      <span class="lbl">Remote asset import</span>
+      <p>Alternatively, <code>_sanityAsset</code> accepts remote URLs: <code>"image@https://images.ctfassets.net/..."</code>. This avoids downloading but leaves assets hosted on Contentful's CDN (which may expire when the space is deleted). Use <code>--assets download</code> (default) for permanent rehosting, or <code>--assets remote</code> to leave URLs pointing at Contentful.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s06">
+    <h2><span class="num">06</span>References &amp; relationships</h2>
+    <p>This is the hardest part of the migration. Contentful links and Sanity references work differently, and the resolution logic must handle link graphs up to 10 levels deep.</p>
+    <h3>Link → Reference mapping</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Contentful link</th><th></th><th>Sanity reference</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">Link (Entry, single)</span></td><td class="arrowcell">→</td><td><span class="af">reference</span></td><td><code>sys.id</code> → mapped Sanity <code>_id</code>.</td></tr>
+          <tr><td><span class="gf">Link (Entry, array)</span></td><td class="arrowcell">→</td><td><span class="af">array</span> of <span class="af">reference</span></td><td>Ordered array preserved.</td></tr>
+          <tr><td><span class="gf">Link (Asset, single)</span></td><td class="arrowcell">→</td><td><span class="af">image</span> / <span class="af">file</span></td><td>Asset rehosted with <code>_sanityAsset</code>.</td></tr>
+          <tr><td><span class="gf">Link (Asset, array)</span></td><td class="arrowcell">→</td><td><span class="af">array</span> of <span class="af">image</span></td><td>Gallery fields.</td></tr>
+          <tr><td><span class="gf">Rich Text embedded entry</span></td><td class="arrowcell">→</td><td>Custom block / inline object</td><td>Reference resolved in Portable Text.</td></tr>
+          <tr><td><span class="gf">Rich Text entry hyperlink</span></td><td class="arrowcell">→</td><td>markDef with <code>_ref</code></td><td>Annotation-style reference.</td></tr>
+          <tr><td><span class="gf">Rich Text asset hyperlink</span></td><td class="arrowcell">→</td><td>markDef with asset ref</td><td>Link to file asset.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>ID mapping</h3>
+    <p>Contentful uses opaque IDs (<code>sys.id</code>). Sanity uses IDs that must contain only letters, numbers, hyphens, and underscores. Portage maps Contentful IDs to Sanity IDs using a configurable strategy:</p>
+    <ul>
+      <li><strong>Pass-through</strong> (<code>--id-strategy passthrough</code>) — use Contentful IDs directly as Sanity IDs. Works for most Contentful IDs, which are base62 strings.</li>
+      <li><strong>Prefix</strong> (<code>--id-strategy prefix</code>, default) — prepend the content type ID: <code>{contentType}_{entryId}</code>. Avoids collisions across content types and makes IDs human-readable in Sanity Studio.</li>
+    </ul>
+    <p>A mapping table (<code>id-map.json</code>) is written alongside the NDJSON so references can be resolved during generation. The load phase uses this table to rewrite every <code>_ref</code> value.</p>
+    <h3>Weak references during import</h3>
+    <p>Sanity's <code>dataset import</code> tool automatically sets all references to <strong>weak</strong> during import, then flips them to <strong>strong</strong> after all documents are in place. This means documents can reference each other in any order in the NDJSON file. Portage writes entries in dependency order (standalone documents first, then referencing documents) as a best practice, but the import tool handles out-of-order references correctly.</p>
+  </section>
+
+  <section class="spec-sec" id="s07">
+    <h2><span class="num">07</span>Out of scope</h2>
+    <p>Contentful is a full content platform, not just a data store. Features that live outside the content model cannot be mechanically migrated.</p>
+    <ul>
+      <li><strong>Webhooks</strong> — not transferable; recreate in Sanity's webhook settings.</li>
+      <li><strong>API keys and roles</strong> — Contentful permissions do not map to Sanity's access model.</li>
+      <li><strong>App extensions / UI extensions</strong> — custom Contentful sidebar apps have no Sanity equivalent; rebuild as Sanity Studio plugins.</li>
+      <li><strong>Contentful Functions</strong> — serverless functions are not transferable.</li>
+      <li><strong>Editor interfaces</strong> — field ordering is carried, but sidebar placement, group tabs, and conditional visibility are not mapped.</li>
+      <li><strong>Workflows and scheduled publishing</strong> — Sanity uses a different workflow model. Scheduled entries become drafts with a metadata note.</li>
+      <li><strong>Cross-space references</strong> — entries linking to a different Contentful space require a separate extraction. Portage logs these as unresolved references.</li>
+      <li><strong>Contentful Tags</strong> — organizational tags (not content type fields) are not carried. Portage logs tagged entries.</li>
+    </ul>
+    <div class="note warn">
+      <span class="lbl">Custom validators</span>
+      <p>Contentful supports custom validators via the App Framework. These have no mechanical mapping. Portage logs fields with custom validators and marks them for manual review in the generated schema.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s08">
+    <h2><span class="num">08</span>Edge cases</h2>
+    <ul>
+      <li><strong>Unresolvable links</strong> — Contentful returns <code>unresolvableLink</code> errors when a linked entry has been unpublished or deleted. Portage preserves the link as a <strong>weak reference</strong> and logs it for manual review.</li>
+      <li><strong>Circular references</strong> — Contentful allows circular link graphs. Sanity handles these correctly via weak references during import. Portage detects cycles and warns about them.</li>
+      <li><strong>Localization</strong> — Contentful uses locale codes (<code>en-US</code>, <code>fr-FR</code>) with per-field fallback chains. Sanity uses <code>languageId</code> with field-level translations. Portage maps the base locale to the Sanity document and creates additional documents for non-base locales using Sanity's i18n plugin conventions.</li>
+      <li><strong>Empty Rich Text</strong> — a Rich Text field containing only an empty paragraph <code>{"nodeType": "document", "content": [{"nodeType": "paragraph", "content": []}]}</code> maps to an empty Portable Text array <code>[]</code>.</li>
+      <li><strong>Rich Text with embedded entries</strong> — embedded entries become custom blocks in Portable Text. The embedded entry is also written as its own top-level Sanity document, and the custom block references it by <code>_ref</code>.</li>
+      <li><strong>Large entries</strong> — Contentful entries can contain Rich Text up to 1MB. Sanity has a document size limit of 100KB for attributes. Very large Rich Text fields may exceed this. Portage logs oversized documents and splits them where possible (e.g., extracting embedded entries as separate documents).</li>
+      <li><strong>Content type name collisions</strong> — Contentful content type IDs can contain dots (<code>blog.post</code>), which are invalid in Sanity type names. Portage replaces dots with underscores (<code>blog_post</code>).</li>
+      <li><strong>Array of mixed link types</strong> — Contentful allows an array field to contain both Entry links and Asset links. Sanity requires typed arrays. Portage splits these into separate reference and image arrays, or uses a union type.</li>
+      <li><strong>Rate limiting</strong> — the CDA limits to 216 requests/minute per token. Portage respects <code>x-contentful-ratelimit-remaining</code> headers and throttles automatically.</li>
+      <li><strong>Missing CMA token</strong> — without a CMA token, Portage cannot fetch content type definitions. It falls back to inferring types from entry field values, which may miss validation rules and optional fields that happen to be empty.</li>
+    </ul>
+  </section>
+
+  <section class="spec-sec" id="s09">
+    <h2><span class="num">09</span>Output</h2>
+    <p>A tarball containing the NDJSON import file, downloaded assets, the generated Sanity schema, the ID mapping table, and the manifest. Run <code>sanity dataset import</code> to load the data.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">project tree</span><span class="meta">output</span></div>
+      <pre is:raw>sanity-project/
+├── import/
+│   ├── data.ndjson           <span class="c">← One JSON document per line</span>
+│   ├── assets/               <span class="c">← Downloaded Contentful assets</span>
+│   │   ├── feature-abc123.jpg
+│   │   └── <span class="c">… 37 more</span>
+│   └── import.tar.gz         <span class="c">← Tarball (data.ndjson + assets/) for CLI import</span>
+├── sanity-schema.ts          <span class="c">← Generated Sanity schema definitions</span>
+├── id-map.json               <span class="c">← Contentful ID → Sanity ID mapping</span>
+├── portage.manifest.json     <span class="c">← extract / transform / load ledger</span>
+└── .env.sanity               <span class="c">← SANITY_PROJECT_ID · SANITY_DATASET</span></pre>
+    </div>
+    <h3>Generated Sanity schema (excerpt)</h3>
+    <div class="code">
+      <div class="code-bar"><span class="name">sanity-schema.ts</span><span class="meta">typescript</span></div>
+      <pre is:raw"><span class="k">import</span> { defineType, defineField } <span class="k">from</span> <span class="s">'sanity'</span>;
+
+<span class="c">// Generated from Contentful content type: blogPost</span>
+<span class="k">export const</span> blogPost = defineType({
+  name: <span class="s">'blogPost'</span>,
+  title: <span class="s">'Blog Post'</span>,
+  type: <span class="s">'document'</span>,
+  fields: [
+    defineField({ name: <span class="s">'title'</span>, type: <span class="s">'string'</span>, validation: r => r.required() }),
+    defineField({ name: <span class="s">'slug'</span>, type: <span class="s">'slug'</span>, options: { source: <span class="s">'title'</span> } }),
+    defineField({ name: <span class="s">'body'</span>, type: <span class="s">'array'</span>, of: [
+      { type: <span class="s">'block'</span> },
+      { type: <span class="s">'image'</span> },
+      { type: <span class="s">'embeddedEntry'</span> },  <span class="c">// custom block</span>
+    ]}),
+    defineField({ name: <span class="s">'featureImage'</span>, type: <span class="s">'image'</span> }),
+    defineField({ name: <span class="s">'category'</span>, type: <span class="s">'reference'</span>, to: [{ type: <span class="s">'category'</span> }] }),
+    defineField({ name: <span class="s">'tags'</span>, type: <span class="s">'array'</span>, of: [{ type: <span class="s">'string'</span> }] }),
+    defineField({ name: <span class="s">'publishedAt'</span>, type: <span class="s">'datetime'</span> }),
+  ],
+});</pre>
+    </div>
+    <h3>Sample NDJSON line</h3>
+    <div class="code">
+      <div class="code-bar"><span class="name">data.ndjson</span><span class="meta">json</span></div>
+      <pre is:raw">{"_id":"blogPost_abc123","_type":"blogPost","title":"Leaving the Walled Garden","slug":{"_type":"slug","current":"leaving-the-walled-garden"},"body":[{"_type":"block","style":"normal","children":[{"_type":"span","marks":[],"text":"The crossing starts at the dock."}],"markDefs":[]}],"featureImage":{"_type":"image","_sanityAsset":"image@file:///assets/feature-abc123.jpg"},"category":{"_type":"reference","_ref":"category_xyz789","_weak":true},"tags":["migration","sanity"],"publishedAt":"2025-11-18T09:45:27Z"}</pre>
+    </div>
+    <div class="note">
+      <span class="lbl">Running the import</span>
+      <p>Execute with <code>npx sanity@latest datasets import import/import.tar.gz production</code>. The tarball format ensures asset paths resolve correctly. Use <code>--replace</code> for re-imports over existing data.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s10">
+    <h2><span class="num">10</span>CLI</h2>
+    <p>Three stages. The extract phase hits the Contentful APIs. The transform phase generates the Sanity schema, converts Rich Text to Portable Text, and resolves references. The load phase writes the NDJSON file, downloads assets, and produces the import tarball.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">portage · contentful → sanity</span><span class="meta">bash</span></div>
+      <pre is:raw"><span class="pr">$</span> npx portage extract <span class="fl">--from</span> contentful \
+    <span class="fl">--space-id</span> $SPACE_ID <span class="fl">--cda-token</span> $CDA_TOKEN <span class="fl">--cma-token</span> $CMA_TOKEN \
+    <span class="fl">--to</span> ./sanity-project
+<span class="pr">$</span> npx portage transform <span class="fl">--target</span> sanity
+<span class="pr">$</span> npx portage load <span class="fl">--assets</span> download <span class="fl">--id-strategy</span> prefix</pre>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Values</th><th>Default</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">--space-id</span></td><td><span class="ty">string</span></td><td>—</td><td>Contentful space ID (required).</td></tr>
+          <tr><td><span class="gf">--environment</span></td><td><span class="ty">string</span></td><td><span class="ty">master</span></td><td>Contentful environment ID.</td></tr>
+          <tr><td><span class="gf">--cda-token</span></td><td><span class="ty">string</span></td><td>—</td><td>Content Delivery API token (required).</td></tr>
+          <tr><td><span class="gf">--cma-token</span></td><td><span class="ty">string</span></td><td>—</td><td>Content Management API token (optional, for schemas + drafts).</td></tr>
+          <tr><td><span class="gf">--target</span></td><td><span class="ty">sanity</span></td><td><span class="ty">astro</span></td><td>Destination platform.</td></tr>
+          <tr><td><span class="gf">--locale</span></td><td><span class="ty">string</span></td><td><span class="ty">en-US</span></td><td>Base locale for single-language import.</td></tr>
+          <tr><td><span class="gf">--include-drafts</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Include draft entries (requires CMA token).</td></tr>
+          <tr><td><span class="gf">--assets</span></td><td><span class="ty">download · remote</span></td><td><span class="ty">download</span></td><td>Download and rehost, or leave URLs pointing at Contentful.</td></tr>
+          <tr><td><span class="gf">--id-strategy</span></td><td><span class="ty">passthrough · prefix</span></td><td><span class="ty">prefix</span></td><td>How Contentful IDs map to Sanity IDs.</td></tr>
+          <tr><td><span class="gf">--dry-run</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Plan and diff only; write nothing.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s11">
+    <h2><span class="num">11</span>Verification</h2>
+    <p>Verification requires both a Contentful account (to verify source data) and a Sanity project (to verify the import). This is why the route is beta — the testing loop involves two external services.</p>
+    <ul>
+      <li><strong>Dry-run first</strong> — <code>--dry-run</code> prints the full plan: content types mapped, entries counted, assets referenced, locales detected. Nothing is written.</li>
+      <li><strong>Manifest ledger</strong> — <code>portage.manifest.json</code> records every Contentful entry, its content type, the mapped Sanity schema type, and the transform applied.</li>
+      <li><strong>Count reconciliation</strong> — compare Contentful entry counts against Sanity document counts post-import. Any delta (skipped, failed, oversized) is listed explicitly.</li>
+      <li><strong>Reference integrity</strong> — query a few documents in Sanity Studio and verify that reference fields resolve correctly (click through to referenced documents).</li>
+      <li><strong>Rich Text fidelity</strong> — open a document with complex Rich Text in Sanity Studio's Portable Text editor and verify that headings, lists, links, embedded entries, and images render correctly.</li>
+      <li><strong>Asset rendering</strong> — verify images display in Sanity Studio's image fields and in the document preview.</li>
+      <li><strong>Sanity validation</strong> — run <code>sanity validate</code> against the imported dataset to check for schema violations.</li>
+    </ul>
+    <div class="code">
+      <div class="code-bar"><span class="name">verification · sanity cli</span><span class="meta">bash</span></div>
+      <pre is:raw"><span class="pr">$</span> npx sanity@latest datasets import import/import.tar.gz production
+<span class="out">✔ Import complete: 142 documents, 38 assets</span>
+
+<span class="pr">$</span> npx sanity@latest documents list --dataset production --format count
+<span class="out">blogPost: 89 · page: 12 · category: 15 · author: 8 · media: 38</span></pre>
+    </div>
+    <div class="note">
+      <span class="lbl">Paired template</span>
+      <p>The Astro + Sanity template from Salish Sea Creatives includes a pre-configured Sanity Studio with schema definitions matching the generated <code>sanity-schema.ts</code>, and an Astro frontend that queries Sanity's GROQ API. Spin it up, run the import, and verify content in Sanity Studio. Both Contentful and Sanity free tiers are sufficient for testing.</p>
+    </div>
+  </section>
+</SpecLayout>
