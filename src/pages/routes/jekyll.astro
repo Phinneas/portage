@@ -1,0 +1,343 @@
+---
+import SpecLayout from '../../layouts/SpecLayout.astro';
+
+const meta = [
+  { k: 'Source', v: 'Jekyll 3 / 4 site' },
+  { k: 'Method', v: 'Filesystem + YAML parsing', cy: true },
+  { k: 'Output', v: 'Markdown · MDX' },
+  { k: 'Target', v: 'Content collections', cy: true },
+  { k: 'Spec rev', v: '2026.06 · r1' },
+];
+
+const toc = [
+  { id: 's01', num: '01', label: 'Overview' },
+  { id: 's02', num: '02', label: 'Extraction' },
+  { id: 's03', num: '03', label: 'Content mapping' },
+  { id: 's04', num: '04', label: 'Transforms' },
+  { id: 's05', num: '05', label: 'Assets' },
+  { id: 's06', num: '06', label: 'Routes & redirects' },
+  { id: 's07', num: '07', label: 'Out of scope' },
+  { id: 's08', num: '08', label: 'Edge cases' },
+  { id: 's09', num: '09', label: 'Output' },
+  { id: 's10', num: '10', label: 'CLI' },
+  { id: 's11', num: '11', label: 'Verification' },
+];
+---
+
+<SpecLayout
+  title="Route Spec — Jekyll → Astro · Portage"
+  description="Portage route specification: migrating a Jekyll site to Astro. _config.yml mapping, _posts extraction, permalink conversion, Liquid tag transforms, collections, routes and redirects, edge cases, output schema, and CLI."
+  origin="Jekyll"
+  status="active"
+  lede="A complete crossing for a Jekyll site: _posts, collections, _config.yml, permalink patterns, and frontmatter mapped to Astro content collections. Jekyll powers millions of GitHub Pages sites — this route carries them to a modern build with zero Ruby dependency."
+  meta={meta}
+  toc={toc}
+>
+  <section class="spec-sec" id="s01">
+    <h2><span class="num">01</span>Overview</h2>
+    <p>This route carries a Jekyll site into an Astro project by converting its <strong>content tree</strong> into Astro content collections and its <strong>permalink structure</strong> into Astro routing. Jekyll's source is a clean filesystem — <code>_posts/</code> with date-prefixed filenames, <code>_config.yml</code> for site and permalink configuration, <code>_collections/</code> for custom content types, and Liquid templates for layout — which makes extraction straightforward but the date-in-filename and permalink patterns require careful handling.</p>
+    <p>Portage reads the Jekyll site in place: parses <code>_config.yml</code> to understand permalink style and collections, walks <code>_posts/</code> and each collection directory, extracts dates from filenames, resolves permalink overrides, strips Liquid tags from Markdown bodies, and writes a buildable Astro project with a generated content config.</p>
+    <div class="note keep">
+      <span class="lbl">Moves intact</span>
+      <p>Posts, pages, collections, frontmatter, inline images, date metadata from filenames, permalink structure, and _config.yml plugin mappings. Categories and tags merge into a single tags array.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s02">
+    <h2><span class="num">02</span>Extraction</h2>
+    <p>Portage treats the Jekyll project root as the source of truth. No export or build step needed — it reads the source directory directly.</p>
+    <h3>A · Config parse</h3>
+    <p>Portage locates <code>_config.yml</code>, parses it as YAML, and extracts the <code>permalink</code> style, <code>collections</code> definitions (both array and map forms), <code>defaults</code> for front matter, and the <code>plugins</code> list. The <code>url</code>, <code>title</code>, <code>description</code>, and <code>author</code> keys are carried into the manifest for reference.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">extract · config</span><span class="meta">yaml</span></div>
+      <pre is:raw><span class="k">permalink:</span> <span class="s">pretty</span>
+<span class="k">collections:</span>
+  <span class="k">projects:</span>
+    <span class="k">output:</span> <span class="s">true</span>
+    <span class="k">permalink:</span> <span class="s">/:collection/:name</span>
+<span class="k">plugins:</span>
+  <span class="s">- jekyll-feed</span>
+  <span class="s">- jekyll-seo-tag</span>
+  <span class="s">- jekyll-sitemap</span></pre>
+    </div>
+    <h3>B · Content walk</h3>
+    <p>Portage walks the Jekyll directory tree and collects content from every standard location:</p>
+    <ul>
+      <li><strong><code>_posts/</code></strong> — every <code>.md</code>, <code>.markdown</code>, <code>.html</code> file. The <code>YYYY-MM-DD-title</code> filename prefix is parsed into a date and a slug.</li>
+      <li><strong><code>_drafts/</code></strong> — included only with <code>--include-drafts</code>. Drafts lack the date prefix; they receive <code>draft: true</code> and a generated date.</li>
+      <li><strong><code>_&lt;collection&gt;/</code></strong> — each directory that matches a <code>collections:</code> entry in <code>_config.yml</code> with <code>output: true</code> is harvested as a separate collection.</li>
+      <li><strong>Top-level pages</strong> — <code>.md</code>, <code>.html</code>, <code>.markdown</code> files at the project root (or in any non-underscored directory) become pages.</li>
+    </ul>
+    <div class="code">
+      <div class="code-bar"><span class="name">extract · jekyll site</span><span class="meta">bash</span></div>
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> jekyll <span class="fl">--source</span> ./my-jekyll-site <span class="fl">--to</span> ./astro-project
+<span class="out">→ 42 posts · 5 pages · 3 collections · 2 drafts · 86 images referenced</span>
+<span class="out">→ permalink style: pretty · 3 plugins mapped</span></pre>
+    </div>
+    <div class="note">
+      <span class="lbl">Note</span>
+      <p>Jekyll posts <strong>must</strong> have the <code>YYYY-MM-DD-title</code> filename format. Portage extracts the date and uses the remainder as the slug. If a <code>date</code> field exists in frontmatter, it takes precedence over the filename date.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s03">
+    <h2><span class="num">03</span>Content mapping</h2>
+    <p>Each Jekyll post, page, or collection document becomes one Markdown file in an Astro content collection. Jekyll frontmatter fields map as follows; fields not listed are preserved under a <code>jekyll:</code> namespace so nothing is silently dropped.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Jekyll field</th><th>Source</th><th></th><th>Astro frontmatter</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">title</span></td><td><span class="ty">fm</span></td><td class="arrowcell">→</td><td><span class="af">title</span></td><td>Required. Falls back to slugified filename.</td></tr>
+          <tr><td><span class="gf">date</span></td><td><span class="ty">fm / filename</span></td><td class="arrowcell">→</td><td><span class="af">pubDate</span></td><td>Filename date extracted; frontmatter date overrides. ISO 8601, coerced by zod.</td></tr>
+          <tr><td><span class="gf">(filename slug)</span></td><td><span class="ty">filename</span></td><td class="arrowcell">→</td><td><span class="af">(filename)</span></td><td>Date prefix stripped; remainder becomes slug and entry id.</td></tr>
+          <tr><td><span class="gf">excerpt · description</span></td><td><span class="ty">fm</span></td><td class="arrowcell">→</td><td><span class="af">description</span></td><td>Jekyll <code>excerpt</code> → Astro <code>description</code>. Falls back to generated excerpt.</td></tr>
+          <tr><td><span class="gf">(body)</span></td><td><span class="ty">file</span></td><td class="arrowcell">→</td><td><span class="af">(body)</span></td><td>Liquid tags stripped or converted — §04.</td></tr>
+          <tr><td><span class="gf">categories</span></td><td><span class="ty">fm</span></td><td class="arrowcell">→</td><td><span class="af">tags</span></td><td>Merged with <code>tags</code> into a single array.</td></tr>
+          <tr><td><span class="gf">tags</span></td><td><span class="ty">fm</span></td><td class="arrowcell">→</td><td><span class="af">tags</span></td><td>Merged with <code>categories</code>. Jekyll categories and tags are semantically equivalent for Astro.</td></tr>
+          <tr><td><span class="gf">author · authors</span></td><td><span class="ty">fm</span></td><td class="arrowcell">→</td><td><span class="af">authors</span></td><td>String coerced to array.</td></tr>
+          <tr><td><span class="gf">permalink</span></td><td><span class="ty">fm</span></td><td class="arrowcell">→</td><td><span class="af">slug</span> + redirect</td><td>Frontmatter permalink overrides the config pattern. Original path becomes a redirect entry.</td></tr>
+          <tr><td><span class="gf">published</span></td><td><span class="ty">fm</span></td><td class="arrowcell">→</td><td><span class="af">draft</span></td><td><code>published: false</code> → <code>draft: true</code>.</td></tr>
+          <tr><td><span class="gf">layout</span></td><td><span class="ty">fm</span></td><td class="arrowcell">→</td><td><span class="af">jekyll.layout</span></td><td>Preserved for reference; Astro uses file-based routing.</td></tr>
+          <tr><td><span class="gf">image · thumbnail</span></td><td><span class="ty">fm</span></td><td class="arrowcell">→</td><td><span class="af">heroImage</span></td><td>Localized — §05.</td></tr>
+          <tr><td><span class="gf">imageAlt · image_alt</span></td><td><span class="ty">fm</span></td><td class="arrowcell">→</td><td><span class="af">heroImageAlt</span></td><td></td></tr>
+          <tr><td><span class="gf">redirect_from</span></td><td><span class="ty">fm</span></td><td class="arrowcell">→</td><td><span class="af">redirects[]</span></td><td>Jekyll redirect-from plugin entries become redirect map entries.</td></tr>
+          <tr><td><span class="gf">seo.title · seo.description</span></td><td><span class="ty">fm</span></td><td class="arrowcell">→</td><td><span class="af">seo.title · seo.description</span></td><td>From jekyll-seo-tag frontmatter.</td></tr>
+          <tr><td><span class="gf">canonical_url</span></td><td><span class="ty">fm</span></td><td class="arrowcell">→</td><td><span class="af">canonicalURL</span></td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <span class="lbl">Categories vs tags</span>
+      <p>Jekyll treats <code>categories</code> as both a taxonomy and a URL path component. In Astro, categories are only a taxonomy. Portage merges <code>categories</code> and <code>tags</code> into a single <code>tags</code> array. The category-based URL path segment is preserved through the redirect map if the permalink pattern included <code>:categories</code>.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s04">
+    <h2><span class="num">04</span>Content transforms</h2>
+    <p>Jekyll processes Liquid tags inside Markdown files. These tags have no Astro equivalent and must be converted or stripped. Portage handles the most common patterns and comments out the rest.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Liquid pattern</th><th></th><th>Astro equivalent</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">{% highlight lang %}...{% endhighlight %}</span></td><td class="arrowcell">→</td><td>Fenced code block with language</td><td><code>```lang ... ```</code></td></tr>
+          <tr><td><span class="gf">{% post_url 2020-01-15-slug %}</span></td><td class="arrowcell">→</td><td><span class="af">/blog/slug/</span></td><td>Resolved to relative path using known post slugs.</td></tr>
+          <tr><td><span class="gf">{% link collection/name.md %}</span></td><td class="arrowcell">→</td><td><span class="af">/collection/name/</span></td><td>Resolved to relative path.</td></tr>
+          <tr><td><span class="gf">{{ page.title }}</span></td><td class="arrowcell">→</td><td><em>stripped</em></td><td>Template variable; not meaningful in static Markdown.</td></tr>
+          <tr><td><span class="gf">{{ site.* }}</span></td><td class="arrowcell">→</td><td><em>stripped</em></td><td>Site-level variable; value noted in manifest.</td></tr>
+          <tr><td><span class="gf">{% include file.ext %}</span></td><td class="arrowcell">→</td><td><code>&lt;!-- include: file.ext --&gt;</code></td><td>Cannot resolve without template context; preserved as comment.</td></tr>
+          <tr><td><span class="gf">{% raw %}...{% endraw %}</span></td><td class="arrowcell">→</td><td>Content as-is</td><td>Raw block unwrapped; inner content preserved.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <span class="lbl">Liquid in the wild</span>
+      <p>Most Jekyll posts use only <code>{% highlight %}</code> and occasional <code>{{ page.* }}</code> variables. Complex Liquid templates (conditionals, loops, filters) in body content are rare but possible; Portage logs each unresolvable tag and preserves it as an HTML comment so nothing is lost.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s05">
+    <h2><span class="num">05</span>Assets</h2>
+    <p>Jekyll serves images and files from flat directories — typically <code>assets/</code>, <code>images/</code>, or <code>/assets/images/</code>. There is no image pipeline; files are copied as-is to <code>_site/</code>. Portage collects every referenced asset and rewrites paths.</p>
+    <ul>
+      <li><strong>Markdown images</strong> — <code>![alt](/assets/images/photo.jpg)</code> paths are rewritten to <code>../../assets/blog/photo.jpg</code> and files copied to <code>src/assets/blog/</code>.</li>
+      <li><strong>HTML img tags</strong> — <code>&lt;img src="/assets/images/photo.jpg"&gt;</code> references are rewritten identically.</li>
+      <li><strong>Frontmatter images</strong> — <code>image: /assets/photos/hero.jpg</code> is rewritten to a relative import path.</li>
+      <li><strong>No remote resolution</strong> — Jekyll sites are self-contained; all image references are local paths. No CDN fetching needed.</li>
+    </ul>
+    <div class="note">
+      <span class="lbl">Placement</span>
+      <p><code>--images assets</code> (default) writes to <code>src/assets/blog/</code> for full Astro optimization. <code>--images public</code> writes stable URLs to <code>public/images/</code>.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s06">
+    <h2><span class="num">06</span>Routes &amp; redirects</h2>
+    <p>Jekyll's permalink system is its most complex routing feature. URL patterns are defined globally in <code>_config.yml</code> and can be overridden per-document in frontmatter. Portage resolves every pattern and generates Astro routing plus a redirect map for any path changes.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Jekyll permalink style</th><th>URL pattern</th><th></th><th>Astro route</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">pretty</span> (default)</td><td>/:categories/:year/:month/:day/:title/</td><td class="arrowcell">→</td><td><span class="af">/blog/:slug/</span> + redirect from original</td></tr>
+          <tr><td><span class="gf">date</span></td><td>/:categories/:year/:month/:day/:title.html</td><td class="arrowcell">→</td><td><span class="af">/blog/:slug/</span> + redirect</td></tr>
+          <tr><td><span class="gf">none</span></td><td>/:categories/:title.html</td><td class="arrowcell">→</td><td><span class="af">/blog/:slug/</span> + redirect</td></tr>
+          <tr><td><span class="gf">custom</span></td><td>/:year/:month/:title/</td><td class="arrowcell">→</td><td><span class="af">/blog/:slug/</span> + redirect from original</td></tr>
+          <tr><td><span class="gf">frontmatter override</span></td><td>permalink: /custom/path/</td><td class="arrowcell">→</td><td><span class="af">/custom/path/</span> preserved + redirect if different</td></tr>
+          <tr><td><span class="gf">collection</span></td><td>/:collection/:name</td><td class="arrowcell">→</td><td><span class="af">/:collection/:name/</span></td></tr>
+          <tr><td><span class="gf">pages</span></td><td>/:path/:basename</td><td class="arrowcell">→</td><td><span class="af">/:path/:basename/</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li><strong>Trailing slashes</strong> — Jekyll produces trailing-slash URLs by default. Portage sets <code>trailingSlash: 'always'</code> in <code>astro.config.mjs</code> to preserve SEO equity.</li>
+      <li><strong>Redirect map</strong> — when <code>--permalink-style original</code> is not set, every post with a non-trivial Jekyll permalink (date-based, category-based) gets a redirect from the original URL to the new Astro slug. Emitted as <code>_redirects</code> (Netlify), <code>vercel.json</code>, or Astro redirects config.</li>
+      <li><strong>Sitemap</strong> — <code>@astrojs/sitemap</code> is added and configured to the new base URL.</li>
+      <li><strong>Feed</strong> — <code>jekyll-feed</code> maps to <code>@astrojs/rss</code>; the feed URL is added to redirects.</li>
+    </ul>
+    <div class="note">
+      <span class="lbl">Permalink style flag</span>
+      <p>Use <code>--permalink-style original</code> to preserve Jekyll's exact URL structure in Astro dynamic routes. Use <code>--permalink-style flat</code> (default) to flatten everything to <code>/blog/:slug/</code> with redirects from the original pattern. Use <code>--permalink-style preserve</code> to generate Astro <code>getStaticPaths</code> that reconstructs the original Jekyll URL pattern.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s07">
+    <h2><span class="num">07</span>Out of scope</h2>
+    <p>Portage moves <strong>content</strong>. Jekyll is also a Ruby build system with a theming and plugin ecosystem, and those systems do not have a one-to-one home in Astro. The following are deliberately not migrated — and Portage tells you what it skipped rather than failing silently.</p>
+    <ul>
+      <li><strong>Liquid templates</strong> — <code>_layouts/</code> and <code>_includes/</code> are not converted to Astro components. You rebuild presentation in Astro (that is the point).</li>
+      <li><strong>Sass/SCSS</strong> — <code>_sass/</code> is not migrated. Astro supports CSS natively; move styles manually or use an integration.</li>
+      <li><strong>Ruby plugins</strong> — Gemfile and <code>_plugins/</code> directory are not transferable. Jekyll plugins are mapped to Astro integrations where an equivalent exists.</li>
+      <li><strong>Theme gems</strong> — <code>theme: minima</code> and <code>remote_theme:</code> are listed in the manifest; you choose an Astro theme or rebuild.</li>
+      <li><strong>_data/ files used only in Liquid</strong> — YAML/JSON data files that are only referenced in Liquid templates are not migrated. Data files that map cleanly to Astro data collections (simple arrays/objects) are offered as candidates in the manifest.</li>
+      <li><strong>Pagination</strong> — Jekyll's <code>paginate</code> and <code>jekyll-paginate</code> logic is not converted; Astro has its own pagination built in.</li>
+      <li><strong>RSS feed configuration</strong> — the feed is regenerated by <code>@astrojs/rss</code>; custom feed metadata is carried into the Astro config.</li>
+    </ul>
+    <div class="note warn">
+      <span class="lbl">Layout dependency</span>
+      <p>Every Jekyll document references a <code>layout</code> key in frontmatter. Portage preserves the value under <code>jekyll.layout</code> but does not generate an Astro layout. You will need to create Astro layouts that match your desired presentation. The manifest lists all unique layout values found during extraction.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s08">
+    <h2><span class="num">08</span>Edge cases</h2>
+    <ul>
+      <li><strong>Date-prefixed filenames</strong> — <code>2020-01-15-my-post.md</code> must be split: date → <code>pubDate</code>, filename → <code>my-post.md</code>. If frontmatter also has a <code>date</code> field, the frontmatter value takes precedence but the filename date is logged.</li>
+      <li><strong>Permalink overrides</strong> — a post with <code>permalink: /custom/path/</code> in frontmatter overrides the global pattern. Portage generates the post at the custom path and adds a redirect if the original pattern URL would differ.</li>
+      <li><strong>Liquid tags in Markdown body</strong> — <code>{% highlight %}</code> is converted; other tags are preserved as HTML comments. The manifest counts Liquid tags found and converted.</li>
+      <li><strong>Drafts</strong> — files in <code>_drafts/</code> lack the date prefix. They receive <code>draft: true</code> and a <code>pubDate</code> set to the file's <code>mtime</code>. Only included with <code>--include-drafts</code>.</li>
+      <li><strong>Collection output flag</strong> — only collections with <code>output: true</code> in <code>_config.yml</code> are extracted. Collections without <code>output: true</code> are listed in the manifest as <code>⚠ no-output</code> candidates.</li>
+      <li><strong>_data/ files</strong> — data files referenced in Liquid templates cannot be resolved automatically. They are inventoried in the manifest with their structure for manual review.</li>
+      <li><strong>Categories in URLs</strong> — Jekyll's <code>:categories</code> placeholder creates nested URL paths. When flattening to <code>/blog/:slug/</code>, each category-path URL gets a redirect entry.</li>
+      <li><strong>Slug collisions</strong> — two posts with the same title slug (different dates) are disambiguated by appending the date; collisions are reported in the manifest.</li>
+      <li><strong>HTML posts</strong> — <code>.html</code> files in <code>_posts/</code> are carried as-is; Liquid inside HTML is not converted. These are flagged for manual review.</li>
+      <li><strong>Front matter defaults</strong> — <code>defaults:</code> in <code>_config.yml</code> that apply to posts or collections are merged into each document's frontmatter during extraction so Astro sees complete data per file.</li>
+    </ul>
+  </section>
+
+  <section class="spec-sec" id="s09">
+    <h2><span class="num">09</span>Output</h2>
+    <p>A predictable, buildable Astro project. The manifest at the root is the full ledger of what was extracted, transformed, and written.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">project tree</span><span class="meta">output</span></div>
+      <pre is:raw>astro-project/
+├── src/
+│   ├── content/
+│   │   ├── blog/              <span class="c">← 42 posts (date prefix stripped from filenames)</span>
+│   │   ├── pages/             <span class="c">← 5 pages</span>
+│   │   └── projects/          <span class="c">← Jekyll _projects/ collection</span>
+│   ├── assets/blog/           <span class="c">← 86 localized images</span>
+│   └── content.config.ts
+├── public/_redirects          <span class="c">← 38 generated redirects (permalink changes)</span>
+├── portage.manifest.json      <span class="c">← extract / transform / load ledger</span>
+└── astro.config.mjs           <span class="c">← trailingSlash · sitemap · redirects</span></pre>
+    </div>
+    <h3>Content collection schema</h3>
+    <div class="code">
+      <div class="code-bar"><span class="name">src/content.config.ts</span><span class="meta">typescript</span></div>
+      <pre is:raw><span class="k">import</span> { defineCollection, z } <span class="k">from</span> <span class="s">'astro:content'</span>;
+<span class="k">import</span> { glob } <span class="k">from</span> <span class="s">'astro/loaders'</span>;
+
+<span class="k">const</span> blog = defineCollection({
+  loader: glob({ pattern: <span class="s">'**/*.{md,mdx}'</span>, base: <span class="s">'./src/content/blog'</span> }),
+  schema: ({ image }) => z.object({
+    title: z.string(),
+    description: z.string().optional(),
+    pubDate: z.coerce.date(),
+    updatedDate: z.coerce.date().optional(),
+    heroImage: image().optional(),
+    heroImageAlt: z.string().optional(),
+    tags: z.array(z.string()).default([]),
+    authors: z.array(z.string()).default([]),
+    draft: z.boolean().default(false),
+    canonicalURL: z.string().url().optional(),
+    seo: z.object({ title: z.string().optional(), description: z.string().optional() }).optional(),
+  }),
+});
+
+<span class="k">const</span> pages = defineCollection({
+  loader: glob({ pattern: <span class="s">'**/*.{md,mdx}'</span>, base: <span class="s">'./src/content/pages'</span> }),
+  schema: ({ image }) => z.object({
+    title: z.string(),
+    description: z.string().optional(),
+    heroImage: image().optional(),
+    draft: z.boolean().default(false),
+  }),
+});
+
+<span class="k">const</span> projects = defineCollection({
+  loader: glob({ pattern: <span class="s">'**/*.{md,mdx}'</span>, base: <span class="s">'./src/content/projects'</span> }),
+  schema: z.object({
+    title: z.string(),
+    description: z.string().optional(),
+    tags: z.array(z.string()).default([]),
+    draft: z.boolean().default(false),
+  }),
+});
+
+<span class="k">export const</span> collections = { blog, pages, projects };</pre>
+    </div>
+    <h3>Sample migrated post</h3>
+    <div class="code">
+      <div class="code-bar"><span class="name">src/content/blog/welcome-to-jekyll.md</span><span class="meta">markdown</span></div>
+      <pre is:raw><span class="t">---</span>
+<span class="k">title:</span> <span class="s">"Welcome to Jekyll"</span>
+<span class="k">description:</span> <span class="s">"A first post on a new Jekyll site."</span>
+<span class="k">pubDate:</span> 2024-06-15
+<span class="k">tags:</span> [<span class="s">"jekyll"</span>, <span class="s">"update"</span>]
+<span class="k">authors:</span> [<span class="s">"Jane Doe"</span>]
+<span class="k">draft:</span> false
+<span class="t">---</span>
+
+You'll find this post in your <code>_posts</code> directory…</pre>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s10">
+    <h2><span class="num">10</span>CLI</h2>
+    <p>Three stages, run in order. Each is idempotent and writes to the manifest.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">portage · jekyll → astro</span><span class="meta">bash</span></div>
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> jekyll <span class="fl">--source</span> ./my-jekyll-site <span class="fl">--to</span> ./astro-project
+<span class="pr">$</span> npx portage transform <span class="fl">--schema</span> content-collections <span class="fl">--content</span> markdown
+<span class="pr">$</span> npx portage load <span class="fl">--images</span> assets <span class="fl">--redirects</span> netlify</pre>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Values</th><th>Default</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">--from</span></td><td><span class="ty">platform</span></td><td><span class="ty">required</span></td><td>Source platform (jekyll).</td></tr>
+          <tr><td><span class="gf">--source</span></td><td><span class="ty">path</span></td><td><span class="ty">.</span></td><td>Jekyll project directory.</td></tr>
+          <tr><td><span class="gf">--to</span></td><td><span class="ty">path</span></td><td><span class="ty">required</span></td><td>Target Astro project directory.</td></tr>
+          <tr><td><span class="gf">--include-drafts</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Carry <code>_drafts/</code> as <code>draft: true</code>.</td></tr>
+          <tr><td><span class="gf">--permalink-style</span></td><td><span class="ty">flat · original · preserve</span></td><td><span class="ty">flat</span></td><td>URL handling strategy — §06.</td></tr>
+          <tr><td><span class="gf">--content</span></td><td><span class="ty">markdown · mdx</span></td><td><span class="ty">markdown</span></td><td>Body format &amp; Liquid tag handling.</td></tr>
+          <tr><td><span class="gf">--images</span></td><td><span class="ty">assets · public</span></td><td><span class="ty">assets</span></td><td>Image placement strategy.</td></tr>
+          <tr><td><span class="gf">--redirects</span></td><td><span class="ty">netlify · vercel · astro</span></td><td><span class="ty">astro</span></td><td>Redirect map format.</td></tr>
+          <tr><td><span class="gf">--dry-run</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Plan &amp; diff only; write nothing.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s11">
+    <h2><span class="num">11</span>Verification</h2>
+    <p>Every crossing is auditable. Nothing is written until you've seen what will change.</p>
+    <ul>
+      <li><strong>Dry-run first</strong> — <code>--dry-run</code> prints the full plan and a diff against the target directory; the filesystem is untouched.</li>
+      <li><strong>Manifest ledger</strong> — <code>portage.manifest.json</code> records every source file, its checksum, the transform applied (including Liquid tag counts), the output path, and any permalink changes.</li>
+      <li><strong>Counted on, counted off</strong> — extract and load counts are reconciled; any delta (skipped drafts, no-output collections, unresolvable Liquid tags) is listed explicitly.</li>
+      <li><strong>Idempotent</strong> — re-running over an existing project shows only true changes, so you can re-pull and review before committing.</li>
+    </ul>
+    <div class="code">
+      <div class="code-bar"><span class="name">portage load --dry-run</span><span class="meta">bash</span></div>
+      <pre is:raw><span class="pr">$</span> npx portage load <span class="fl">--dry-run</span>
+<span class="out">→ 42 posts → 42 files          ✓ reconciled</span>
+<span class="out">→ 5 pages → 5 files            ✓</span>
+<span class="out">→ 1 collection → 3 documents   ✓</span>
+<span class="out">→ 86 images → 82 unique        ✓ deduped</span>
+<span class="out">→ 38 redirects mapped          ✓ permalink pattern changes</span>
+<span class="out">→ 2 no-output collections      ⚠ review — no output:true in config</span>
+<span class="out">→ 7 Liquid tags unconverted     ⚠ preserved as HTML comments</span>
+<span class="out">→ 0 unresolved references      ✓ nothing left on the dock</span></pre>
+    </div>
+  </section>
+</SpecLayout>

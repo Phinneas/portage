@@ -1,0 +1,37 @@
+{
+  "name": "portage",
+  "version": "0.1.0",
+  "description": "Migration toolkit for carrying your site to Astro. Intact.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "bin": {
+    "portage": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "fast-glob": "^3.3.2",
+    "fast-xml-parser": "^5.9.3",
+    "jiti": "^2.4.2",
+    "ora": "^8.2.0",
+    "sharp": "^0.33.5",
+    "turndown": "^7.2.4",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/turndown": "^5.0.6",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

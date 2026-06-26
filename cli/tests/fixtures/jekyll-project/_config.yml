@@ -1,0 +1,25 @@
+title: My Jekyll Site
+description: >-
+  A simple Jekyll blog for testing the Portage migration pipeline.
+url: "https://example.com"
+author: Jane Doe
+permalink: pretty
+show_excerpts: true
+
+collections:
+  projects:
+    output: true
+    permalink: /:collection/:name
+
+defaults:
+  - scope:
+      path: ""
+      type: "posts"
+    values:
+      layout: "post"
+      author: "Jane Doe"
+
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+  - jekyll-sitemap

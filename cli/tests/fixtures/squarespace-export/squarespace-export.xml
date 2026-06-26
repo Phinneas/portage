@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+  xmlns:content="http://purl.org/rss/1.0/modules/content/"
+  xmlns:dc="http://purl.org/dc/elements/1.1/"
+  xmlns:wp="http://wordpress.org/export/1.2/"
+>
+  <channel>
+    <title>My Squarespace Site</title>
+    <link>https://mysite.squarespace.com</link>
+    <description>A sample Squarespace export for testing</description>
+
+    <!-- Blog post with image and tags -->
+    <item>
+      <title>My First Blog Post</title>
+      <link>https://mysite.squarespace.com/blog/my-first-blog-post</link>
+      <pubDate>Mon, 15 Jan 2024 10:00:00 +0000</pubDate>
+      <dc:creator><![CDATA[Alice Chen]]></dc:creator>
+      <category domain="category"><![CDATA[Technology]]></category>
+      <category domain="post_tag"><![CDATA[javascript]]></category>
+      <category domain="post_tag"><![CDATA[webdev]]></category>
+      <content:encoded><![CDATA[
+        <div class="sqs-block sqs-block-html">
+          <p>Welcome to my first blog post. This is some <strong>bold text</strong> and a link.</p>
+        </div>
+        <div class="sqs-block sqs-block-image">
+          <img src="https://images.squarespace-cdn.com/content/v1/abc123/1705312000000-hero.jpg?format=750w" alt="Hero image" />
+        </div>
+        <div class="sqs-block sqs-block-html">
+          <h2>Section Heading</h2>
+          <ul>
+            <li>Item one</li>
+            <li>Item two</li>
+          </ul>
+        </div>
+      ]]></content:encoded>
+      <excerpt:encoded><![CDATA[A brief summary of the first post.]]></excerpt:encoded>
+      <wp:post_name>my-first-blog-post</wp:post_name>
+      <wp:post_type>post</wp:post_type>
+      <wp:status>publish</wp:status>
+      <wp:post_date>2024-01-15 10:00:00</wp:post_date>
+    </item>
+
+    <!-- Blog post with gallery block -->
+    <item>
+      <title>Design Portfolio Update</title>
+      <link>https://mysite.squarespace.com/blog/design-portfolio-update</link>
+      <pubDate>Wed, 20 Mar 2024 14:30:00 +0000</pubDate>
+      <dc:creator><![CDATA[Bob Martinez]]></dc:creator>
+      <category domain="category"><![CDATA[Design]]></category>
+      <category domain="post_tag"><![CDATA[portfolio]]></category>
+      <category domain="post_tag"><![CDATA[gallery]]></category>
+      <content:encoded><![CDATA[
+        <div class="sqs-block sqs-block-gallery">
+          <img src="https://images.squarespace-cdn.com/content/v1/abc123/1705312000001-photo1.jpg?format=500w" alt="Photo 1" />
+          <img src="https://images.squarespace-cdn.com/content/v1/abc123/1705312000002-photo2.jpg?format=750w" alt="Photo 2" />
+        </div>
+        <div class="sqs-block sqs-block-html">
+          <p>Here are some recent design pieces.</p>
+        </div>
+      ]]></content:encoded>
+      <excerpt:encoded><![CDATA[Recent design work showcase.]]></excerpt:encoded>
+      <wp:post_name>design-portfolio-update</wp:post_name>
+      <wp:post_type>post</wp:post_type>
+      <wp:status>publish</wp:status>
+      <wp:post_date>2024-03-20 14:30:00</wp:post_date>
+    </item>
+
+    <!-- Draft blog post -->
+    <item>
+      <title>Work in Progress</title>
+      <link>https://mysite.squarespace.com/blog/work-in-progress</link>
+      <pubDate>Fri, 10 May 2024 09:00:00 +0000</pubDate>
+      <dc:creator><![CDATA[Alice Chen]]></dc:creator>
+      <category domain="category"><![CDATA[Technology]]></category>
+      <content:encoded><![CDATA[
+        <div class="sqs-block sqs-block-html">
+          <p>This is still a draft. Not yet published.</p>
+        </div>
+      ]]></content:encoded>
+      <excerpt:encoded><![CDATA[A draft post.]]></excerpt:encoded>
+      <wp:post_name>work-in-progress</wp:post_name>
+      <wp:post_type>post</wp:post_type>
+      <wp:status>draft</wp:status>
+      <wp:post_date>2024-05-10 09:00:00</wp:post_date>
+    </item>
+
+    <!-- Static page -->
+    <item>
+      <title>About Us</title>
+      <link>https://mysite.squarespace.com/about-us</link>
+      <pubDate>Tue, 01 Jan 2024 00:00:00 +0000</pubDate>
+      <dc:creator><![CDATA[Alice Chen]]></dc:creator>
+      <content:encoded><![CDATA[
+        <div class="sqs-block sqs-block-html">
+          <h1>About Our Team</h1>
+          <p>We are a team of passionate creators.</p>
+          <blockquote>This is a quote from our founder.</blockquote>
+        </div>
+      ]]></content:encoded>
+      <excerpt:encoded><![CDATA[Learn more about our team.]]></excerpt:encoded>
+      <wp:post_name>about-us</wp:post_name>
+      <wp:post_type>page</wp:post_type>
+      <wp:status>publish</wp:status>
+      <wp:post_date>2024-01-01 00:00:00</wp:post_date>
+    </item>
+
+    <!-- Attachment (should be filtered out) -->
+    <item>
+      <title>attachment-image</title>
+      <wp:post_name>attachment-image</wp:post_name>
+      <wp:post_type>attachment</wp:post_type>
+      <wp:status>inherit</wp:status>
+      <wp:post_date>2024-01-15 10:00:00</wp:post_date>
+    </item>
+
+  </channel>
+</rss>

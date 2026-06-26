@@ -1,0 +1,301 @@
+---
+import SpecLayout from '../../layouts/SpecLayout.astro';
+
+const meta = [
+  { k: 'Source', v: 'Next.js 13+ (pages router)', cy: true },
+  { k: 'Method', v: 'Filesystem + config parsing', cy: true },
+  { k: 'Output', v: 'Markdown · MDX' },
+  { k: 'Target', v: 'Content collections', cy: true },
+  { k: 'Spec rev', v: '2026.06 · r1' },
+];
+
+const toc = [
+  { id: 's01', num: '01', label: 'Overview' },
+  { id: 's02', num: '02', label: 'Extraction' },
+  { id: 's03', num: '03', label: 'Content mapping' },
+  { id: 's04', num: '04', label: 'Transforms' },
+  { id: 's05', num: '05', label: 'Assets' },
+  { id: 's06', num: '06', label: 'Routes & redirects' },
+  { id: 's07', num: '07', label: 'Out of scope' },
+  { id: 's08', num: '08', label: 'Edge cases' },
+  { id: 's09', num: '09', label: 'Output' },
+  { id: 's10', num: '10', label: 'CLI' },
+  { id: 's11', num: '11', label: 'Verification' },
+];
+---
+
+<SpecLayout
+  title="Route Spec — Next.js → Astro · Portage"
+  description="Portage route specification: migrating a Next.js content site (pages router) to Astro. getStaticProps conversion, MDX mapping, next/image and next/link rewrites, layout extraction, and CLI."
+  origin="Next.js"
+  status="active"
+  lede="A crossing for the content-site Next.js user: someone who picked Next.js as a static site generator and wants Astro's zero-JS default. Pages router MDX, getStaticProps data, and next/component rewrites mapped to Astro content collections. Not for app developers — those are staying."
+  meta={meta}
+  toc={toc}
+>
+  <section class="spec-sec" id="s01">
+    <h2><span class="num">01</span>Overview</h2>
+    <p>This route carries a <strong>Next.js content site</strong> (blog, marketing, docs) built on the <strong>pages router</strong> into an Astro project. The migrant is not the app developer building dashboards — it's the person who used Next.js as a static site generator and wants out from under the hydration overhead.</p>
+    <p>Next.js content sites typically use: MDX or Markdown files in <code>pages/</code>, <code>getStaticProps</code>/<code>getStaticPaths</code> for SSG data fetching, <code>next/image</code> for optimization, <code>next/link</code> for client-side navigation, and <code>_app.js</code>/<code>_document.js</code> for layout wrappers. Portage reads the project in place, maps each pattern to its Astro equivalent, and writes a buildable Astro project.</p>
+    <div class="note keep">
+      <span class="lbl">Moves intact</span>
+      <p>MDX/Markdown content and frontmatter, <code>getStaticProps</code> data as frontmatter fields, image references (rewritten from <code>next/image</code> to <code>astro:assets</code>), layout wrappers, and <code>public/</code> assets. Route slugs derived from file paths are preserved.</p>
+    </div>
+    <div class="note warn">
+      <span class="lbl">Pages router only (v0.1)</span>
+      <p>The app router (<code>app/</code> directory with <code>layout.tsx</code>, <code>page.tsx</code>, <code>generateStaticParams</code>) is a different extraction pattern. It is out of scope for this version. The <code>--router</code> flag future-proofs the interface.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s02">
+    <h2><span class="num">02</span>Extraction</h2>
+    <p>Portage treats the existing Next.js project as the source of truth. No export file needed — it reads the repository directly.</p>
+    <h3>A · Project scan</h3>
+    <p>Portage locates <code>next.config.js</code> (or <code>.mjs</code>, <code>.ts</code>), detects the router type (<code>pages/</code> presence confirms pages router), and collects content files from <code>pages/**/*.mdx</code> and <code>pages/**/*.md</code>.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">extract · scan</span><span class="meta">bash</span></div>
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> next <span class="fl">--source</span> ./my-next-site <span class="fl">--to</span> ./astro-project
+<span class="out">→ 24 posts · 6 pages · 3 tags · 2 authors · 8 images referenced</span></pre>
+    </div>
+    <h3>B · Config parsing</h3>
+    <p><code>next.config.js</code> is parsed for: <code>images.domains</code> (external image sources), <code>redirects()</code> export (redirect map), <code>rewrites()</code> export (alias map), and <code>env</code> (environment variables used in content). Each has a direct Astro equivalent.</p>
+    <h3>C · getStaticProps extraction</h3>
+    <p>For pages that export <code>getStaticProps</code>, Portage extracts the function body to identify: data passed as page props (which becomes frontmatter), external API calls (which become <code>fetch()</code> calls in Astro frontmatter), and <code>props</code> shape (which informs the collection schema).</p>
+    <h3>D · getStaticPaths extraction</h3>
+    <p>For dynamic route pages (e.g., <code>pages/blog/[slug].tsx</code>), <code>getStaticPaths</code> reveals the full set of static routes. Each path becomes a content collection entry.</p>
+  </section>
+
+  <section class="spec-sec" id="s03">
+    <h2><span class="num">03</span>Content mapping</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Next.js source</th><th>Astro target</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>pages/*.mdx</code></td><td><code>src/content/blog/slug.mdx</code></td><td>Frontmatter preserved; JS exports stripped</td></tr>
+          <tr><td><code>pages/*.md</code></td><td><code>src/content/blog/slug.md</code></td><td>Direct carry</td></tr>
+          <tr><td><code>pages/blog/[slug].mdx</code></td><td><code>src/content/blog/slug.mdx</code></td><td>Dynamic route → collection entry</td></tr>
+          <tr><td><code>pages/index.mdx</code></td><td><code>src/content/pages/index.md</code></td><td>Home page</td></tr>
+          <tr><td><code>pages/about.mdx</code></td><td><code>src/content/pages/about.md</code></td><td>Static page</td></tr>
+          <tr><td><code>pages/_app.js</code></td><td><code>src/layouts/Layout.astro</code></td><td>Layout wrapper</td></tr>
+          <tr><td><code>pages/_document.js</code></td><td><code>src/layouts/Base.astro</code></td><td>HTML shell</td></tr>
+          <tr><td><code>public/*</code></td><td><code>public/*</code></td><td>Direct copy</td></tr>
+          <tr><td><code>getStaticProps</code> data</td><td>Frontmatter fields</td><td>API calls → fetch() in frontmatter</td></tr>
+          <tr><td><code>getStaticPaths</code></td><td>Collection entries</td><td>Each path → one .mdx file</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Frontmatter field mapping</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Next.js page export</th><th>Astro frontmatter</th><th>Transform</th></tr></thead>
+        <tbody>
+          <tr><td><code>export const title</code></td><td><code>title</code></td><td>Direct</td></tr>
+          <tr><td><code>export const date</code></td><td><code>pubDate</code></td><td>Coerce to Date</td></tr>
+          <tr><td><code>export const tags</code></td><td><code>tags</code></td><td>Ensure array</td></tr>
+          <tr><td><code>export const author</code></td><td><code>authors</code></td><td>Wrap in array</td></tr>
+          <tr><td><code>export const excerpt</code></td><td><code>description</code></td><td>Direct</td></tr>
+          <tr><td><code>export const draft</code></td><td><code>draft</code></td><td>Coerce boolean</td></tr>
+          <tr><td><code>export const heroImage</code></td><td><code>heroImage</code></td><td>Rewrite path</td></tr>
+          <tr><td><code>getStaticProps → props</code></td><td>Spread into frontmatter</td><td>Per-key mapping</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s04">
+    <h2><span class="num">04</span>Transforms</h2>
+    <h3>A · Component rewrites</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Next.js component</th><th>Astro equivalent</th><th>Transform rule</th></tr></thead>
+        <tbody>
+          <tr><td><code>&lt;Image /&gt;</code> from <code>next/image</code></td><td><code>&lt;Image /&gt;</code> from <code>astro:assets</code></td><td>Rewrite import + props</td></tr>
+          <tr><td><code>&lt;Link /&gt;</code> from <code>next/link</code></td><td><code>&lt;a&gt;</code></td><td>Unwrap, keep href</td></tr>
+          <tr><td><code>&lt;Head&gt;</code> from <code>next/head</code></td><td>Astro <code>&lt;head&gt;</code></td><td>Unwrap, slot children</td></tr>
+          <tr><td><code>&lt;Script&gt;</code> from <code>next/script</code></td><td><code>&lt;script&gt;</code></td><td>Unwrap, keep src</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>B · Import rewrites</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Next.js import</th><th>Astro replacement</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>import Image from 'next/image'</code></td><td><code>import { Image } from 'astro:assets'</code></td><td>Prop mapping needed</td></tr>
+          <tr><td><code>import Link from 'next/link'</code></td><td>Remove import</td><td>Replace all <code>&lt;Link&gt;</code> with <code>&lt;a&gt;</code></td></tr>
+          <tr><td><code>import Head from 'next/head'</code></td><td>Remove import</td><td>Astro handles <code>&lt;head&gt;</code> natively</td></tr>
+          <tr><td><code>import { useRouter } from 'next/router'</code></td><td>Remove</td><td>No client-side routing in Astro</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>C · next/image prop mapping</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>next/image prop</th><th>astro:assets prop</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>src="/img.jpg"</code></td><td><code>src={import("./img.jpg")}</code></td><td>String → import for optimization</td></tr>
+          <tr><td><code>width={800}</code></td><td><code>width={800}</code></td><td>Direct carry</td></tr>
+          <tr><td><code>height={600}</code></td><td><code>height={600}</code></td><td>Direct carry</td></tr>
+          <tr><td><code>alt="..."</code></td><td><code>alt="..."</code></td><td>Direct carry</td></tr>
+          <tr><td><code>layout="fill"</code></td><td><code>style="object-fit: cover"</code></td><td>Different approach</td></tr>
+          <tr><td><code>objectFit="cover"</code></td><td>Removed (use CSS)</td><td>Needs review</td></tr>
+          <tr><td><code>placeholder="blur"</code></td><td>Removed</td><td>Astro handles blur natively</td></tr>
+          <tr><td><code>priority</code></td><td>Removed</td><td>Astro preloads hero images</td></tr>
+          <tr><td><code>loader</code></td><td>Removed</td><td>Custom loaders not supported</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s05">
+    <h2><span class="num">05</span>Assets</h2>
+    <p>Next.js content sites store images in two locations:</p>
+    <ul>
+      <li><strong><code>public/</code></strong> — Static assets referenced by path string. Portage copies these to the Astro <code>public/</code> directory.</li>
+      <li><strong>Imported via ESM</strong> — <code>import hero from "./hero.jpg"</code> in MDX. Portage moves these to <code>src/assets/</code> and rewrites the import path.</li>
+      <li><strong>External domains</strong> — <code>images.domains</code> in <code>next.config.js</code>. Portage records these as remote images but does not download by default (use <code>--images localize-external</code>).</li>
+    </ul>
+    <div class="note keep">
+      <span class="lbl">next/image → astro:assets</span>
+      <p>The core transformation: Next's <code>&lt;Image src="/path.jpg" /&gt;</code> (string path from <code>public/</code>) becomes Astro's <code>&lt;Image src={import("./path.jpg")} /&gt;</code> (ESM import from <code>src/assets/</code>). This is the biggest manual-review item because the import pattern differs fundamentally.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s06">
+    <h2><span class="num">06</span>Routes &amp; redirects</h2>
+    <h3>A · File-system routing → collection routing</h3>
+    <p>Next.js pages router uses file-system routing: <code>pages/about.js</code> → <code>/about</code>, <code>pages/blog/[slug].js</code> → <code>/blog/:slug</code>. Portage converts these into Astro content collections with <code>getStaticPaths()</code> generated from the collection entries.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Next.js file</th><th>Next.js route</th><th>Astro target</th></tr></thead>
+        <tbody>
+          <tr><td><code>pages/index.js</code></td><td><code>/</code></td><td><code>src/pages/index.astro</code></td></tr>
+          <tr><td><code>pages/about.js</code></td><td><code>/about</code></td><td><code>src/content/pages/about.md</code></td></tr>
+          <tr><td><code>pages/blog/index.js</code></td><td><code>/blog</code></td><td><code>src/pages/blog/index.astro</code></td></tr>
+          <tr><td><code>pages/blog/[slug].js</code></td><td><code>/blog/:slug</code></td><td><code>src/content/blog/*.mdx</code></td></tr>
+          <tr><td><code>pages/404.js</code></td><td><code>/404</code></td><td><code>src/pages/404.astro</code></td></tr>
+          <tr><td><code>pages/_app.js</code></td><td>—</td><td><code>src/layouts/Layout.astro</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>B · Redirects</h3>
+    <p>The <code>redirects()</code> export in <code>next.config.js</code> maps directly to Astro's redirect configuration:</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">next.config.js redirects</span><span class="meta">js</span></div>
+      <pre is:raw>// next.config.js
+module.exports = {
+  async redirects() {
+    return [
+      { source: '/old-blog/:slug', destination: '/blog/:slug', permanent: true }
+    ]
+  }
+}</pre>
+    </div>
+    <div class="code">
+      <div class="code-bar"><span class="name">astro.config.mjs redirects</span><span class="meta">js</span></div>
+      <pre is:raw">// astro.config.mjs
+export default defineConfig({
+  redirects: { '/old-blog/:slug': '/blog/:slug' }
+})</pre>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s07">
+    <h2><span class="num">07</span>Out of scope</h2>
+    <ul>
+      <li><strong>App router</strong> (<code>app/</code> directory with <code>layout.tsx</code>, <code>page.tsx</code>, <code>generateStaticParams</code>) — different extraction pattern, deferred to v0.2.</li>
+      <li><strong>API routes</strong> (<code>pages/api/*</code>) — not content, not migrated.</li>
+      <li><strong>Server-side rendering</strong> (<code>getServerSideProps</code>) — incompatible with Astro's static model.</li>
+      <li><strong>Middleware</strong> (<code>middleware.ts</code>) — no Astro equivalent.</li>
+      <li><strong>Internationalization</strong> (<code>i18n</code> config) — complex, deferred.</li>
+      <li><strong>Incremental Static Regeneration</strong> (<code>revalidate</code>) — use an Astro adapter instead.</li>
+      <li><strong>Custom <code>next/image</code> loaders</strong> — Astro uses its own image service.</li>
+      <li><strong>React Server Components</strong> — not applicable to pages router.</li>
+    </ul>
+  </section>
+
+  <section class="spec-sec" id="s08">
+    <h2><span class="num">08</span>Edge cases</h2>
+    <ul>
+      <li><strong>MDX with <code>export const getStaticProps</code></strong> — The page component and the data function are in the same file. Portage must separate the frontmatter-bearing content from the JS function.</li>
+      <li><strong>Dynamic route segments</strong> — <code>pages/blog/[...slug].js</code> (catch-all) and <code>pages/shop/[id]/[slug].js</code> (nested) need slug reconstruction from file path.</li>
+      <li><strong>Component imports in MDX</strong> — Custom components imported into MDX need to be either converted to Astro components or preserved via the <code>components</code> prop.</li>
+      <li><strong><code>_app.js</code> with providers</strong> — Context providers and wrappers in <code>_app.js</code> don't map cleanly to Astro layouts. Flagged for manual review.</li>
+      <li><strong><code>next.config.js</code> with <code>withMDX</code> wrapper</strong> — The <code>@next/mdx</code> plugin wraps the config. Portage must unwrap to find the base config.</li>
+      <li><strong>Multiple routers</strong> — Projects that use both <code>pages/</code> and <code>app/</code> simultaneously. Portage scopes to <code>pages/</code> only and warns about the app directory.</li>
+      <li><strong><code>pages/_document.js</code> with custom markup</code> — Custom <code>&lt;html&gt;</code> or <code>&lt;body&gt;</code> tags need manual review.</li>
+      <li><strong>Static <code>public/</code> references</strong> — Image paths like <code>/images/hero.jpg</code> in MDX bodies need to be distinguished from Astro asset imports.</li>
+    </ul>
+  </section>
+
+  <section class="spec-sec" id="s09">
+    <h2><span class="num">09</span>Output</h2>
+    <div class="code">
+      <div class="code-bar"><span class="name">next.js project → astro project</span><span class="meta">tree</span></div>
+      <pre is:raw">my-next-site/                  my-astro-site/
+├── pages/                      ├── src/
+│   ├── _app.js                 │   ├── layouts/
+│   ├── index.mdx      →        │   │   └── Layout.astro
+│   ├── about.mdx      →        │   ├── content/
+│   └── blog/                   │   │   ├── blog/
+│       ├── index.js            │   │   │   ├── first-post.mdx
+│       └── [slug].mdx  →       │   │   │   └── second-post.mdx
+│                                │   │   ├── pages/
+├── public/             →       │   │   │   └── about.md
+│   └── images/                 │   │   └── config.ts
+│                                │   ├── assets/
+├── next.config.js              │   │   └── blog/
+└── package.json                │   └── pages/
+                                 │       ├── index.astro
+                                 │       └── blog/
+                                 │           └── index.astro
+                                 ├── public/
+                                 │   └── images/
+                                 ├── astro.config.mjs
+                                 └── package.json</pre>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s10">
+    <h2><span class="num">10</span>CLI</h2>
+    <p>Three stages, run in order. The <code>--router</code> flag defaults to <code>pages</code> and future-proofs for app router support.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">portage · next → astro</span><span class="meta">bash</span></div>
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> next <span class="fl">--source</span> ./my-next-site <span class="fl">--router</span> pages <span class="fl">--to</span> ./astro-project
+<span class="pr">$</span> npx portage transform <span class="fl">--schema</span> content-collections
+<span class="pr">$</span> npx portage load <span class="fl">--images</span> assets <span class="fl">--redirects</span> astro</pre>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Values</th><th>Default</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">--source</span></td><td><span class="ty">path</span></td><td><span class="ty">.</span></td><td>Next.js project root.</td></tr>
+          <tr><td><span class="gf">--router</span></td><td><span class="ty">pages · app</span></td><td><span class="ty">pages</span></td><td>Which router to extract from.</td></tr>
+          <tr><td><span class="gf">--content</span></td><td><span class="ty">markdown · mdx</span></td><td><span class="ty">mdx</span></td><td>Output body format.</td></tr>
+          <tr><td><span class="gf">--images</span></td><td><span class="ty">assets · public · localize-external</span></td><td><span class="ty">assets</span></td><td>Image placement.</td></tr>
+          <tr><td><span class="gf">--dry-run</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Plan &amp; diff only.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s11">
+    <h2><span class="num">11</span>Verification</h2>
+    <p>Every crossing is auditable. The dry-run reconciles the Next.js source against the Astro output so you can see exactly what moves and what needs review.</p>
+    <ul>
+      <li><strong>Dry-run first</strong> — <code>--dry-run</code> prints the plan and a diff; nothing is written.</li>
+      <li><strong>Component audit</strong> — every <code>next/*</code> import is listed with its Astro replacement. Unmappable components (custom loaders, providers) are flagged.</li>
+      <li><strong>Route audit</strong> — every <code>pages/</code> file is accounted for. Dynamic routes show their generated slugs.</li>
+      <li><strong>Props audit</strong> — every <code>getStaticProps</code> data field is listed with its frontmatter mapping. Fields that can't be automatically mapped are flagged for manual review.</li>
+    </ul>
+    <div class="code">
+      <div class="code-bar"><span class="name">portage extract --dry-run</span><span class="meta">bash</span></div>
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> next <span class="fl">--source</span> ./site <span class="fl">--dry-run</span>
+<span class="out">→ 24 posts (MDX) → 24 collection entries  ✓</span>
+<span class="out">→ 6 pages (MDX) → 6 content/pages        ✓</span>
+<span class="out">→ 3 next/image → 3 astro:assets          ⚠ manual review</span>
+<span class="out">→ 1 getStaticProps with API call          ⚠ needs fetch()</span>
+<span class="out">→ 1 _app.js with provider                ⚠ manual review</span></pre>
+    </div>
+  </section>
+</SpecLayout>

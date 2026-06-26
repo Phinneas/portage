@@ -19,3 +19,9 @@ pnpm-debug.log*
 
 # macOS-specific files
 .DS_Store
+
+# CLI build output
+cli/dist/
+
+# Tool directories
+.memsearch/

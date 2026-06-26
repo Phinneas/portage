@@ -6,7 +6,7 @@ const meta = [
   { k: 'Method', v: 'Filesystem + config parsing', cy: true },
   { k: 'Output', v: 'Markdown · MDX' },
   { k: 'Target', v: 'Content collections', cy: true },
-  { k: 'Spec rev', v: '2026.06 · r1' },
+  { k: 'Spec rev', v: '2026.06 · r2' },
 ];
 
 const toc = [
@@ -50,7 +50,7 @@ const toc = [
     <p>Portage locates <code>gatsby-config.js</code> (or <code>.ts</code>, <code>.mjs</code>), parses the plugin array, and identifies content source plugins (<code>gatsby-source-filesystem</code>, <code>gatsby-plugin-mdx</code>, <code>gatsby-transformer-remark</code>, <code>gatsby-source-ghost</code>, etc.). It then walks the configured source directories and collects every <code>.md</code>, <code>.mdx</code>, and <code>.json</code> content file.</p>
     <div class="code">
       <div class="code-bar"><span class="name">extract · gatsby project</span><span class="meta">bash</span></div>
-      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> gatsby <span class="fl">--to</span> ./astro-project
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> gatsby <span class="fl">--source</span> . <span class="fl">--to</span> ./astro-project
 <span class="out">→ 78 posts · 4 pages · 12 tags · 3 authors · 214 images referenced</span>
 <span class="out">→ 8 plugins mapped · 3 GraphQL page queries found</span></pre>
     </div>
@@ -58,7 +58,7 @@ const toc = [
     <p>Gatsby page queries live in template files (often <code>src/templates/blog-post.js</code>) or page components. Portage parses the <code>graphql</code> tagged template literals, extracts field selections, and maps them to frontmatter keys and collection schema types.</p>
     <div class="code">
       <div class="code-bar"><span class="name">extract · query harvest</span><span class="meta">bash</span></div>
-      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> gatsby <span class="fl">--queries</span> ./src/templates/*.js <span class="fl">--to</span> ./astro-project</pre>
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> gatsby <span class="fl">--queries</span> ./src/templates/*.js <span class="fl">--source</span> . <span class="fl">--to</span> ./astro-project</pre>
     </div>
     <div class="note">
       <span class="lbl">Note</span>
@@ -265,7 +265,7 @@ The build times were the first signal. Then the plugin deprecation notices…</p
     <p>Three stages, run in order. Each is idempotent and writes to the manifest.</p>
     <div class="code">
       <div class="code-bar"><span class="name">portage · gatsby → astro</span><span class="meta">bash</span></div>
-      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> gatsby <span class="fl">--to</span> ./astro-project
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> gatsby <span class="fl">--source</span> ./my-gatsby-site <span class="fl">--to</span> ./astro-project
 <span class="pr">$</span> npx portage transform <span class="fl">--schema</span> content-collections <span class="fl">--content</span> mdx
 <span class="pr">$</span> npx portage load <span class="fl">--images</span> assets <span class="fl">--redirects</span> netlify</pre>
     </div>
@@ -273,13 +273,16 @@ The build times were the first signal. Then the plugin deprecation notices…</p
       <table>
         <thead><tr><th>Flag</th><th>Values</th><th>Default</th><th>Purpose</th></tr></thead>
         <tbody>
-          <tr><td><span class="gf">--from</span></td><td><span class="ty">path</span></td><td><span class="ty">.</span></td><td>Gatsby project directory.</td></tr>
+          <tr><td><span class="gf">--from</span></td><td><span class="ty">platform</span></td><td><span class="ty">required</span></td><td>Source platform (gatsby).</td></tr>
+          <tr><td><span class="gf">--source</span></td><td><span class="ty">path</span></td><td><span class="ty">.</span></td><td>Gatsby project directory.</td></tr>
+          <tr><td><span class="gf">--to</span></td><td><span class="ty">path</span></td><td><span class="ty">required</span></td><td>Target Astro project directory.</td></tr>
           <tr><td><span class="gf">--queries</span></td><td><span class="ty">glob</span></td><td><span class="ty">src/templates/*.js</span></td><td>GraphQL page query files to harvest.</td></tr>
           <tr><td><span class="gf">--content</span></td><td><span class="ty">markdown · mdx</span></td><td><span class="ty">markdown</span></td><td>Body format &amp; component handling.</td></tr>
           <tr><td><span class="gf">--images</span></td><td><span class="ty">assets · public · localize-external</span></td><td><span class="ty">assets</span></td><td>Image placement strategy.</td></tr>
           <tr><td><span class="gf">--include-drafts</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Carry draft frontmatter as <code>draft: true</code>.</td></tr>
           <tr><td><span class="gf">--redirects</span></td><td><span class="ty">netlify · vercel · astro</span></td><td><span class="ty">astro</span></td><td>Redirect map format.</td></tr>
           <tr><td><span class="gf">--dry-run</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Plan &amp; diff only; write nothing.</td></tr>
+          <tr><td><span class="gf">--gatsby-env</span></td><td><span class="ty">production · development</span></td><td><span class="ty">production</span></td><td>Environment for gatsby-config function evaluation.</td></tr>
         </tbody>
       </table>
     </div>
