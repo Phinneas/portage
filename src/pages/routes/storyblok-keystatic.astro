@@ -1,0 +1,378 @@
+---
+import SpecLayout from '../../layouts/SpecLayout.astro';
+
+const meta = [
+  { k: 'Source', v: 'Storyblok (Management API)', cy: true },
+  { k: 'Method', v: 'API pagination + export', cy: true },
+  { k: 'Output', v: 'YAML · JSON · Markdoc files' },
+  { k: 'Target', v: 'Keystatic local files', cy: true },
+  { k: 'Spec rev', v: '2026.06 · r1 · beta' },
+];
+
+const toc = [
+  { id: 's01', num: '01', label: 'Overview' },
+  { id: 's02', num: '02', label: 'Extraction' },
+  { id: 's03', num: '03', label: 'Content model mapping' },
+  { id: 's04', num: '04', label: 'Content transforms' },
+  { id: 's05', num: '05', label: 'Assets' },
+  { id: 's06', num: '06', label: 'References & links' },
+  { id: 's07', num: '07', label: 'Out of scope' },
+  { id: 's08', num: '08', label: 'Edge cases' },
+  { id: 's09', num: '09', label: 'Output' },
+  { id: 's10', num: '10', label: 'CLI' },
+  { id: 's11', num: '11', label: 'Verification' },
+];
+---
+
+<SpecLayout
+  title="Route Spec — Storyblok → Keystatic · Portage"
+  description="Portage route specification: migrating a Storyblok space into Keystatic file format. Component mapping, bloks to object fields, Rich Text to Markdoc, asset rehosting, and CLI."
+  origin="Storyblok"
+  status="beta"
+  lede="The philosophically cleanest crossing in the map: Storyblok stores structured JSON components, Keystatic stores the same structure in YAML or JSON files in your repository. No API to push to, no database to seed — Portage just writes files. The conceptual mapping is nearly 1:1."
+  meta={meta}
+  toc={toc}
+>
+  <section class="spec-sec" id="s01">
+    <h2><span class="num">01</span>Overview</h2>
+    <p>This route carries a <strong>Storyblok space</strong> into a <strong>Keystatic-managed content directory</strong>. It is the simplest migration architecturally: both systems store structured content as JSON-shaped component trees. Storyblok keeps them in its API; Keystatic keeps them as files in your Git repository. Portage reads from the API and writes to the filesystem. No database, no seed script, no import CLI.</p>
+    <p>Storyblok organizes content as <strong>stories</strong> (composed of <strong>bloks</strong> — nestable component instances). Keystatic organizes content as <strong>collections</strong> (composed of <strong>object fields</strong> — nestable structured fields). A Storyblok component maps directly to a Keystatic object schema. A blok maps to an object instance. The shape is the same; only the storage medium changes.</p>
+    <div class="note keep">
+      <span class="lbl">Moves intact</span>
+      <p>Stories → collection entries, components → Keystatic schemas, bloks → object fields, Rich Text → Markdoc, assets → local image files, story slugs → entry slugs, nested bloks → nested objects.</p>
+    </div>
+    <div class="note">
+      <span class="lbl">Why this route</span>
+      <p>Lowest build complexity of all the headless-CMS-to-headless-CMS paths. No API to push to — Keystatic just reads files. No cloud accounts needed for verification. The paired Astro + Keystatic template from Salish Sea Creatives is the free lead-gen template, so the on-ramp is zero-cost. Good candidate for when Keystatic's audience grows.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s02">
+    <h2><span class="num">02</span>Extraction</h2>
+    <p>Portage reads a Storyblok space via the <strong>Management API</strong>, which provides full access to stories, components, and assets. The Content Delivery API is not used — the Management API returns both published and draft content, plus component schemas.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">extract · management api</span><span class="meta">bash</span></div>
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> storyblok \
+    <span class="fl">--space-id</span> $SPACE_ID <span class="fl">--mapi-token</span> $MAPI_TOKEN \
+    <span class="fl">--to</span> ./astro-project
+<span class="out">→ 12 components · 89 stories · 142 assets · 3 locales</span></pre>
+    </div>
+    <h3>Data fetched</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Source</th><th>Records</th><th>Used for</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">Components</span></td><td>varies</td><td>Keystatic schema generation — field types, nesting, validations.</td></tr>
+          <tr><td><span class="gf">Stories</span></td><td>varies</td><td>Keystatic collection entries — one directory per story.</td></tr>
+          <tr><td><span class="gf">Assets</span></td><td>varies</td><td>Local image files — downloaded from <code>a.storyblok.com</code>.</td></tr>
+          <tr><td><span class="gf">Datasources</span></td><td>varies</td><td>Option field enumerations — mapped to Keystatic <code>fields.select</code> options.</td></tr>
+          <tr><td><span class="gf">Spaces</span></td><td>1</td><td>Space-level metadata (name, default locale).</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <span class="lbl">Authentication</span>
+      <p>The Management API requires a personal access token with <code>read</code> access to the space. Generate one at <code>Settings → Access Tokens → Generate a new token</code>. No OAuth flow needed.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s03">
+    <h2><span class="num">03</span>Content model mapping</h2>
+    <p>Storyblok components map almost directly to Keystatic schemas. The type systems are similar enough that most fields are a passthrough with a name change.</p>
+    <h3>Field type mapping</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Storyblok field</th><th></th><th>Keystatic field</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">text</span></td><td class="arrowcell">→</td><td><span class="af">fields.text</span></td><td>Short strings.</td></tr>
+          <tr><td><span class="gf">textarea</span></td><td class="arrowcell">→</td><td><span class="af">fields.text</span></td><td>Long strings. No separate textarea type in Keystatic.</td></tr>
+          <tr><td><span class="gf">richtext</span></td><td class="arrowcell">→</td><td><span class="af">fields.markdoc</span></td><td>Tiptap JSON → Markdoc — see §04.</td></tr>
+          <tr><td><span class="gf">markdown</span></td><td class="arrowcell">→</td><td><span class="af">fields.markdoc</span></td><td>Markdown → Markdoc passthrough.</td></tr>
+          <tr><td><span class="gf">number</span></td><td class="arrowcell">→</td><td><span class="af">fields.integer</span> or <span class="af">fields.number</span></td><td>Integer vs decimal distinction.</td></tr>
+          <tr><td><span class="gf">boolean</span></td><td class="arrowcell">→</td><td><span class="af">fields.checkbox</span></td><td></td></tr>
+          <tr><td><span class="gf">datetime</span></td><td class="arrowcell">→</td><td><span class="af">fields.date</span></td><td>ISO 8601 passthrough.</td></tr>
+          <tr><td><span class="gf">bloks</span></td><td class="arrowcell">→</td><td><span class="af">fields.array</span> of <span class="af">fields.object</span></td><td>Nestable components → object array — see below.</td></tr>
+          <tr><td><span class="gf">asset (single)</span></td><td class="arrowcell">→</td><td><span class="af">fields.image</span></td><td>Rehosted — see §05.</td></tr>
+          <tr><td><span class="gf">multi-asset</span></td><td class="arrowcell">→</td><td><span class="af">fields.array</span> of <span class="af">fields.image</span></td><td>Gallery fields.</td></tr>
+          <tr><td><span class="gf">link</span></td><td class="arrowcell">→</td><td><span class="af">fields.object</span> (link structure)</td><td>Dynamic link types — see §06.</td></tr>
+          <tr><td><span class="gf">option (single)</span></td><td class="arrowcell">→</td><td><span class="af">fields.select</span></td><td>Enumerated values.</td></tr>
+          <tr><td><span class="gf">option (multi)</span></td><td class="arrowcell">→</td><td><span class="af">fields.multiselect</span></td><td>Multiple selections.</td></tr>
+          <tr><td><span class="gf">table</span></td><td class="arrowcell">→</td><td><span class="af">fields.array</span> of <span class="af">fields.object</span></td><td>Table rows → row objects with cell values.</td></tr>
+          <tr><td><span class="gf">references</span></td><td class="arrowcell">→</td><td><span class="af">fields.array</span> of <span class="af">fields.text</span></td><td>Story UUIDs → slug references — see §06.</td></tr>
+          <tr><td><span class="gf">group</span></td><td class="arrowcell">→</td><td><span class="af">fields.object</span></td><td>Visual grouping → structured object.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Component → Keystatic object</h3>
+    <p>Each Storyblok <strong>component</strong> becomes a <code>fields.object()</code> definition that can be used inside a <code>fields.array()</code> (the bloks field equivalent). The component name becomes the object's discriminator. Nestable bloks map recursively.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">storyblok component → keystatic object</span><span class="meta">typescript</span></div>
+      <pre is:raw"><span class="c">// Storyblok component: "hero"</span>
+<span class="c">// { name: "hero", schema: { title: { type: "text" }, image: { type: "asset" } } }</span>
+
+<span class="c">// → Keystatic object field</span>
+fields.object({
+  label: <span class="s">'Hero'</span>,
+  schema: {
+    title: fields.text({ label: <span class="s">'Title'</span> }),
+    image: fields.image({ label: <span class="s">'Image'</span> }),
+  },
+})</pre>
+    </div>
+    <div class="note">
+      <span class="lbl">Schema generation</span>
+      <p>Portage generates a <code>keystatic.config.ts</code> file containing all collections, singletons, and object field definitions. This file is importable into your Astro project. It is a starting point — you will likely adjust field labels, add validation, and configure the <code>slugField</code> for each collection.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s04">
+    <h2><span class="num">04</span>Content transforms</h2>
+    <p>Storyblok stores rich text as <strong>Tiptap JSON</strong> (a document structure with <code>type</code>, <code>content</code>, <code>attrs</code>, <code>marks</code>). Keystatic stores rich text as <strong>Markdoc</strong> (Markdown with tags and attributes). The conversion walks the Tiptap AST and emits Markdoc.</p>
+    <h3>Tiptap → Markdoc mapping</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Storyblok Tiptap node</th><th></th><th>Keystatic Markdoc</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">paragraph</span></td><td class="arrowcell">→</td><td>Plain paragraph text</td><td></td></tr>
+          <tr><td><span class="gf">heading (1–6)</span></td><td class="arrowcell">→</td><td><code># … ######</code></td><td></td></tr>
+          <tr><td><span class="gf">bulletList · orderedList</span></td><td class="arrowcell">→</td><td><code>- </code> / <code>1. </code></td><td></td></tr>
+          <tr><td><span class="gf">blockquote</span></td><td class="arrowcell">→</td><td><code>&gt;</code></td><td></td></tr>
+          <tr><td><span class="gf">codeBlock</span></td><td class="arrowcell">→</td><td>Fenced code block</td><td>Language preserved.</td></tr>
+          <tr><td><span class="gf">horizontalRule</span></td><td class="arrowcell">→</td><td><code>---</code></td><td></td></tr>
+          <tr><td><span class="gf">image</span></td><td class="arrowcell">→</td><td><code>![alt](src)</code></td><td>Src rewritten to local path.</td></tr>
+          <tr><td><span class="gf">bloks (component)</span></td><td class="arrowcell">→</td><td>Markdoc tag <code>{% hero ... %}</code></td><td>Component instances → custom tags.</td></tr>
+          <tr><td><span class="gf">bold · italic · code</span></td><td class="arrowcell">→</td><td><code>**</code> / <code>*</code> / <code>`</code></td><td>Marks → inline formatting.</td></tr>
+          <tr><td><span class="gf">link</span></td><td class="arrowcell">→</td><td><code>[text](url)</code></td><td>External and internal links.</td></tr>
+          <tr><td><span class="gf">strikethrough · underline</span></td><td class="arrowcell">→</td><td>Markdoc tag <code>{% strike %}</code></td><td>Not native Markdown; scaffolded tag.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <span class="lbl">Embedded bloks</span>
+      <p>Storyblok's signature feature is nestable bloks inside Rich Text. These map to <strong>Markdoc custom tags</strong> — the Keystatic equivalent of embedded components. Portage scaffolds a matching tag definition in the generated Keystatic config so the Markdoc renders correctly.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s05">
+    <h2><span class="num">05</span>Assets</h2>
+    <p>Storyblok stores assets at <code>a.storyblok.com</code> with URLs like <code>https://a.storyblok.com/f/{space}/{id}/{dimensions}/{filename}</code>. Storyblok's image service provides on-the-fly resizing via URL parameters (<code>/m/400x300/</code>). Keystatic stores images as local files in your repository, referenced by relative path.</p>
+    <ul>
+      <li><strong>Download originals</strong> — strip Storyblok resize parameters; fetch the full-resolution source. Keystatic has no built-in image service; Astro handles responsive sizing.</li>
+      <li><strong>Dedupe by URL hash</strong> — each unique asset URL is fetched once. Duplicates collapse to a single file.</li>
+      <li><strong>Write to configured directory</strong> — Keystatic's <code>fields.image</code> accepts a <code>directory</code> option (e.g. <code>public/images/</code>). Portage downloads assets to this directory and rewrites references.</li>
+      <li><strong>Rewrite references</strong> — asset fields in the YAML/JSON point at the local file path instead of the Storyblok CDN URL.</li>
+    </ul>
+    <div class="code">
+      <div class="code-bar"><span class="name">image field · keystatic yaml</span><span class="meta">yaml</span></div>
+      <pre is:raw">title: Leaving the Walled Garden
+featureImage: /images/blog/walled-garden.jpg
+publishedAt: 2025-11-18</pre>
+    </div>
+    <div class="note">
+      <span class="lbl">External images</span>
+      <p>Some Storyblok entries use external image URLs (e.g. Unsplash). These are left remote by default, or localized with <code>--images localize-external</code>.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s06">
+    <h2><span class="num">06</span>References &amp; links</h2>
+    <p>Storyblok and Keystatic model relationships differently. Storyblok uses <strong>story references</strong> (UUID-based) and a <strong>link field</strong> (dynamic type: url, story, asset, email). Keystatic has no reference field type — relationships are expressed as string values (slugs, paths, URLs) in text fields.</p>
+    <h3>Reference mapping</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Storyblok link type</th><th></th><th>Keystatic field</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">references</span> (story UUIDs)</td><td class="arrowcell">→</td><td><span class="af">fields.array</span> of <span class="af">fields.text</span></td><td>UUIDs resolved to slugs. Stored as slug strings.</td></tr>
+          <tr><td><span class="gf">link → url</span></td><td class="arrowcell">→</td><td><span class="af">fields.text</span></td><td>External URL passthrough.</td></tr>
+          <tr><td><span class="gf">link → story</span></td><td class="arrowcell">→</td><td><span class="af">fields.text</span></td><td>Story UUID resolved to slug/path string.</td></tr>
+          <tr><td><span class="gf">link → asset</span></td><td class="arrowcell">→</td><td><span class="af">fields.file</span></td><td>Asset rehosted as local file.</td></tr>
+          <tr><td><span class="gf">link → email</span></td><td class="arrowcell">→</td><td><span class="af">fields.text</span></td><td>Email address as string.</td></tr>
+          <tr><td><span class="gf">bloks (component instance)</span></td><td class="arrowcell">→</td><td><span class="af">fields.object</span></td><td>Inlined component data, not a reference.</td></tr>
+          <tr><td><span class="gf">Rich Text link → story</span></td><td class="arrowcell">→</td><td>Markdoc <code>[text](/slug)</code></td><td>Internal link rewritten to slug path.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <span class="lbl">No referential integrity</span>
+      <p>Unlike Payload and Sanity, Keystatic has no reference field with referential integrity. Relationships are stored as strings (slugs, paths). This means Portage resolves Storyblok UUIDs to slug-based paths at migration time and stores the resolved value. If a referenced story is deleted or renamed later, the string becomes stale — but this is the Keystatic tradeoff for file-based simplicity.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s07">
+    <h2><span class="num">07</span>Out of scope</h2>
+    <p>Storyblok features that don't map to file-based Keystatic content.</p>
+    <ul>
+      <li><strong>Visual Editor coordinates</strong> — Storyblok's visual editing overlay (click-to-edit) has no Keystatic equivalent. Keystatic uses its own admin UI at <code>/keystatic</code>.</li>
+      <li><strong>Field plugins</strong> — custom Storyblok field types have no Keystatic equivalent; data is preserved as <code>fields.text</code> (JSON stringified).</li>
+      <li><strong>Datasources</strong> — option field datasources are carried as literal option lists in the schema. The dynamic datasource API is not replicated.</li>
+      <li><strong>Workflows and scheduled publishing</strong> — Keystatic relies on Git branching for workflow. Scheduled entries become drafts with a metadata note.</li>
+      <li><strong>App marketplace integrations</strong> — not transferable.</li>
+      <li><strong>Story versions</strong> — only the published (or most recent draft) version is carried. Storyblok's version history is not replicated.</li>
+      <li><strong>Spaces and folders</strong> — Storyblok's folder hierarchy maps to Keystatic collection <code>path</code> configuration, but nested folders are flattened into separate collections rather than preserved as a tree.</li>
+    </ul>
+  </section>
+
+  <section class="spec-sec" id="s08">
+    <h2><span class="num">08</span>Edge cases</h2>
+    <ul>
+      <li><strong>Nestable bloks</strong> — Storyblok allows bloks inside bloks to arbitrary depth. Keystatic supports nested object fields. Portage maps these recursively, but very deep nesting (4+ levels) may produce unwieldy schemas. A <code>--max-nesting</code> flag caps the recursion depth.</li>
+      <li><strong>Component whitelists</strong> — bloks fields can restrict which components are allowed. Keystatic arrays are untyped (any object schema is accepted). Portage logs the whitelist as a comment in the generated config but cannot enforce it at the schema level.</li>
+      <li><strong>Empty bloks</strong> — a bloks field with zero components maps to an empty array <code>[]</code> in the YAML/JSON.</li>
+      <li><strong>Richtext with blok inserts</strong> — Rich Text fields can embed component instances inline. These become Markdoc custom tags. The component data is also written as a comment or sidecar so it survives round-trips.</li>
+      <li><strong>Localization</strong> — Storyblok uses per-field locale fallbacks. Keystatic uses file-level locale directories. Portage maps the default locale to the base collection and creates parallel directories for alternate locales (e.g. <code>content/posts-fr/*</code>).</li>
+      <li><strong>Table fields</strong> — Storyblok tables use <code>thead</code>/<code>tbody</code> with <code>_uid</code> and <code>component</code> metadata. Portage strips the metadata and maps tables to arrays of row objects with cell value arrays.</li>
+      <li><strong>Large component schemas</strong> — Storyblok components can have up to 50 fields. Keystatic has no documented limit, but very large objects may impact admin UI performance. Portage logs warnings for components with 25+ fields.</li>
+      <li><strong>Rate limiting</strong> — the Management API limits to 600 requests per minute. Portage respects rate limit headers and throttles automatically.</li>
+      <li><strong>Story folders as collections</strong> — multiple Storyblok folders may contain different content types. Portage maps each folder to a separate Keystatic collection using the folder path as the collection <code>path</code>.</li>
+    </ul>
+  </section>
+
+  <section class="spec-sec" id="s09">
+    <h2><span class="num">09</span>Output</h2>
+    <p>A Keystatic-compatible content directory, a generated config file, downloaded assets, and the manifest. No import step needed — Keystatic reads the files directly.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">project tree</span><span class="meta">output</span></div>
+      <pre is:raw>astro-project/
+├── content/
+│   ├── posts/               <span class="c">← Collection from Storyblok "posts" folder</span>
+│   │   ├── leaving-the-walled-garden/
+│   │   │   ├── index.yaml    <span class="c">← Metadata fields</span>
+│   │   │   └── body.mdoc     <span class="c">← Rich Text → Markdoc</span>
+│   │   └── second-post/
+│   │       ├── index.yaml
+│   │       └── body.mdoc
+│   ├── pages/                <span class="c">← Collection from Storyblok root pages</span>
+│   │   └── about/
+│   │       └── index.yaml
+│   └── settings/             <span class="c">← Singleton from Storyblok "config" story</span>
+│       └── index.yaml
+├── public/images/            <span class="c">← Downloaded Storyblok assets</span>
+├── keystatic.config.ts       <span class="c">← Generated Keystatic config</span>
+├── portage.manifest.json     <span class="c">← extract / transform / load ledger</span>
+└── astro.config.mjs          <span class="c">← keystatic() integration added</span></pre>
+    </div>
+    <h3>Generated Keystatic config (excerpt)</h3>
+    <div class="code">
+      <div class="code-bar"><span class="name">keystatic.config.ts</span><span class="meta">typescript</span></div>
+      <pre is:raw"><span class="k">import</span> { config, fields, collection, singleton } <span class="k">from</span> <span class="s">'@keystatic/core'</span>;
+
+<span class="k">export default</span> config({
+  storage: { kind: <span class="s">'local'</span> },
+  collections: {
+    posts: collection({
+      label: <span class="s">'Posts'</span>,
+      slugField: <span class="s">'title'</span>,
+      path: <span class="s">'content/posts/*'</span>,
+      format: { contentField: <span class="s">'body'</span> },
+      schema: {
+        title: fields.slug({ name: { label: <span class="s">'Title'</span> } }),
+        body: fields.markdoc({ label: <span class="s">'Body'</span> }),
+        featureImage: fields.image({
+          label: <span class="s">'Feature Image'</span>,
+          directory: <span class="s">'public/images/posts'</span>,
+        }),
+        category: fields.select({
+          label: <span class="s">'Category'</span>,
+          options: [
+            { value: <span class="s">'migration'</span>, label: <span class="s">'Migration'</span> },
+            { value: <span class="s">'astro'</span>, label: <span class="s">'Astro'</span> },
+          ],
+        }),
+        publishedAt: fields.date({ label: <span class="s">'Published Date'</span> }),
+        blocks: fields.array(
+          fields.object({
+            label: <span class="s">'Block'</span>,
+            schema: {
+              component: fields.text({ label: <span class="s">'Component'</span> }),
+              <span class="c">// … component fields inlined</span>
+            },
+          }),
+          { label: <span class="s">'Blocks'</span> }
+        ),
+      },
+    }),
+  },
+});</pre>
+    </div>
+    <h3>Sample entry</h3>
+    <div class="code">
+      <div class="code-bar"><span class="name">content/posts/leaving-the-walled-garden/index.yaml</span><span class="meta">yaml</span></div>
+      <pre is:raw">title: Leaving the Walled Garden
+featureImage: /images/posts/walled-garden.jpg
+category: migration
+publishedAt: 2025-11-18</pre>
+    </div>
+    <div class="code">
+      <div class="code-bar"><span class="name">content/posts/leaving-the-walled-garden/body.mdoc</span><span class="meta">markdoc</span></div>
+      <pre is:raw">The crossing starts at the dock, not the destination.
+
+## Why we left
+
+We needed a content layer that lived in our repository, not in someone else's database.
+
+{% hero title="Next stop" image="/images/posts/hero-next.jpg" /%}</pre>
+    </div>
+    <div class="note">
+      <span class="lbl">Zero import step</span>
+      <p>Unlike Payload (seed script) and Sanity (dataset import), Keystatic reads files directly from the repository. The load phase is just <code>fs.writeFileSync()</code>. Start the Astro dev server, navigate to <code>/keystatic</code>, and the content is there.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s10">
+    <h2><span class="num">10</span>CLI</h2>
+    <p>Three stages. The load phase is just file writes — no API calls, no import CLI, no database. This is the simplest load phase of any Portage route.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">portage · storyblok → keystatic</span><span class="meta">bash</span></div>
+      <pre is:raw"><span class="pr">$</span> npx portage extract <span class="fl">--from</span> storyblok \
+    <span class="fl">--space-id</span> $SPACE_ID <span class="fl">--mapi-token</span> $MAPI_TOKEN \
+    <span class="fl">--to</span> ./astro-project
+<span class="pr">$</span> npx portage transform <span class="fl">--target</span> keystatic
+<span class="pr">$</span> npx portage load <span class="fl">--images</span> download <span class="fl">--format</span> yaml</pre>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Values</th><th>Default</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">--space-id</span></td><td><span class="ty">string</span></td><td>—</td><td>Storyblok space ID (required).</td></tr>
+          <tr><td><span class="gf">--mapi-token</span></td><td><span class="ty">string</span></td><td>—</td><td>Management API personal access token (required).</td></tr>
+          <tr><td><span class="gf">--target</span></td><td><span class="ty">keystatic</span></td><td><span class="ty">astro</span></td><td>Destination platform.</td></tr>
+          <tr><td><span class="gf">--format</span></td><td><span class="ty">yaml · json</span></td><td><span class="ty">yaml</span></td><td>Keystatic data file format.</td></tr>
+          <tr><td><span class="gf">--content-field</span></td><td><span class="ty">string</span></td><td><span class="ty">body</span></td><td>Which Storyblok field becomes the Markdoc content field.</td></tr>
+          <tr><td><span class="gf">--images</span></td><td><span class="ty">download · localize-external</span></td><td><span class="ty">download</span></td><td>Download and rehost, or leave URLs pointing at Storyblok.</td></tr>
+          <tr><td><span class="gf">--image-dir</span></td><td><span class="ty">path</span></td><td><span class="ty">public/images</span></td><td>Directory for downloaded image assets.</td></tr>
+          <tr><td><span class="gf">--max-nesting</span></td><td><span class="ty">number</span></td><td><span class="ty">4</span></td><td>Maximum bloks nesting depth to map.</td></tr>
+          <tr><td><span class="gf">--locale</span></td><td><span class="ty">string</span></td><td><span class="ty">default</span></td><td>Base locale for single-language import.</td></tr>
+          <tr><td><span class="gf">--dry-run</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Plan and diff only; write nothing.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s11">
+    <h2><span class="num">11</span>Verification</h2>
+    <p>Verification is the simplest of all the headless-CMS routes. No import step, no API queries. Just start the dev server and open the admin UI.</p>
+    <ul>
+      <li><strong>Dry-run first</strong> — <code>--dry-run</code> prints the full plan: components mapped, stories counted, assets referenced, folders detected. Nothing is written.</li>
+      <li><strong>Manifest ledger</strong> — <code>portage.manifest.json</code> records every Storyblok story, its component, the mapped Keystatic collection, and the transform applied.</li>
+      <li><strong>File count reconciliation</strong> — compare Storyblok story counts against generated Keystatic entry directories. Any delta is listed explicitly.</li>
+      <li><strong>Admin UI spot-check</strong> — start <code>npm run dev</code>, open <code>http://localhost:4321/keystatic</code>, navigate to a collection, and verify that entries appear with correct field values.</li>
+      <li><strong>Markdoc rendering</strong> — view a post page in the Astro frontend and verify that headings, lists, links, images, and custom component tags render correctly.</li>
+      <li><strong>Image rendering</strong> — verify downloaded images display in both the Keystatic admin and the Astro frontend.</li>
+      <li><strong>Git diff</strong> — since Keystatic content is just files, <code>git diff</code> shows the full migration. Review the diff before committing.</li>
+    </ul>
+    <div class="code">
+      <div class="code-bar"><span class="name">verification · dev server</span><span class="meta">bash</span></div>
+      <pre is:raw"><span class="pr">$</span> npm run dev
+<span class="out">→ http://localhost:4321/keystatic</span>
+
+<span class="pr">$</span> git diff --stat content/
+<span class="out">content/posts/ | 89 entries · 178 files</span>
+<span class="out">content/pages/ | 12 entries · 24 files</span>
+<span class="out">public/images/ | 142 assets</span></pre>
+    </div>
+    <div class="note">
+      <span class="lbl">Paired template</span>
+      <p>The Astro + Keystatic template from Salish Sea Creatives is the free lead-gen template. It ships with Keystatic configured, a <code>keystatic.config.ts</code> matching the generated schema, and an Astro frontend that renders Markdoc content. Clone it, run the migration, and verify. Zero cost.</p>
+    </div>
+  </section>
+</SpecLayout>
