@@ -31,7 +31,7 @@ You pick one `--from` platform per run. Portage reads the source project, maps t
 | Next.js → Astro | Active | MDX, getStaticProps, next/image, next/link, pages router | [/routes/next](/routes/next) |
 | Substack → Astro | Beta | Newsletter archive, posts, images, canonical URLs | [/routes/substack](/routes/substack) |
 | Webflow → Astro | Planned | Content, assets, routes, CMS collections via API | -- |
-| WordPress → Astro | Planned | Posts, pages, media, taxonomies, SEO metadata | -- |
+| WordPress → Astro | Planned | Posts, pages, media, taxonomies, SEO — highest plugin variance, deferred pending lower-variance route maturation | -- |
 
 ### Headless CMS destinations
 
