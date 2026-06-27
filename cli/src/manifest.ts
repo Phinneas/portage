@@ -66,6 +66,11 @@ export const ManifestSchema = z.object({
     redirects: z.number().default(0),
     clientOnlyRoutes: z.number().default(0),
     skippedDrafts: z.number().default(0),
+    handoff: z.object({
+      templateSlug: z.string().nullable().optional(),
+      templateName: z.string().nullable().optional(),
+      templateUrl: z.string().nullable().optional(),
+    }).optional(),
   }).optional(),
 });
 

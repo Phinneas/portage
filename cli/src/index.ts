@@ -12,6 +12,7 @@ import { extractSubstack, mapSubstackFeaturesToAstro, writeSubstackPosts, downlo
 import { extractGhost, mapGhostFeaturesToAstro, writeGhostExport } from './ghost.js';
 import { writePayloadSeed, downloadAllGhostImages } from './payload-writer.js';
 import { extractNext, transformNextContent, mapNextPluginsToAstro } from './next.js';
+import { generateHandoff, generateMigrationReport, writeMigrationReport } from './creatives.js';
 import { transformContent, rewriteMdx, writeCollections, localizeAssets, writeRedirects, writeSquarespaceCollections, writeSubstackCollections } from './astro-writer.js';
 
 const program = new Command();
@@ -329,6 +330,52 @@ program.command('load')
       if (manifest.load.clientOnlyRoutes > 0) console.log(chalk.yellow(`  → ${manifest.load.clientOnlyRoutes} client-only routes         ⚠ review`));
       if (manifest.transform?.unmappedPlugins?.length) console.log(chalk.yellow(`  → ${manifest.transform.unmappedPlugins.length} plugins unmapped           ⚠ manual review`));
       console.log(chalk.dim('  → ') + '0 unresolved references      ✓ nothing left on the dock');
+
+      // ── Handoff: Creatives template link ──────────────────────────────
+      const destinationPlatform = opts.target || 'astro';
+      const handoff = generateHandoff(manifest.source.platform, destinationPlatform);
+
+      if (handoff.template) {
+        manifest.load.handoff = {
+          templateSlug: handoff.template.slug,
+          templateName: handoff.template.name,
+          templateUrl: handoff.template.url,
+        };
+
+        console.log('');
+        console.log(chalk.cyan('  ⚡ ') + handoff.message);
+      }
+
+      // ── Migration report ──────────────────────────────────────────────
+      if (!opts.dryRun) {
+        const report = generateMigrationReport(
+          manifest.source.platform,
+          destinationPlatform,
+          opts.method || 'seed',
+          {
+            posts: manifest.extract.counts.posts,
+            pages: manifest.extract.counts.pages,
+            tags: manifest.extract.counts.tags,
+            authors: manifest.extract.counts.authors,
+            images: manifest.extract.counts.images,
+            imagesDownloaded: cdnResult?.downloaded || 0,
+            imagesFailed: cdnResult?.failed || 0,
+            redirects: manifest.load.redirects,
+            skippedDrafts: manifest.load.skippedDrafts,
+          },
+          {
+            seedScript: payloadResult ? 'src/seed.ts' : undefined,
+            config: payloadResult ? 'src/payload.config.ts' : undefined,
+            mediaDir: payloadResult?.mediaDir,
+            envFile: payloadResult ? '.env' : undefined,
+          },
+        );
+        const reportPath = writeMigrationReport(report, targetDir);
+        console.log(chalk.dim('  → ') + `Migration report: ${reportPath}`);
+
+        // Re-write manifest with handoff data
+        writeManifest(manifest, targetDir);
+      }
     } catch (err) {
       spinner.fail(chalk.red('Load failed'));
       console.error(chalk.red(err instanceof Error ? err.message : String(err)));
