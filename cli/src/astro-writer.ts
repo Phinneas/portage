@@ -14,6 +14,7 @@ import {
 import { deriveSlug } from './gatsby.js';
 import { deriveSlug as deriveJekyllSlug, JEKYLL_FIELD_KEY_MAP, convertLiquidTags, parsePostFilename } from './jekyll.js';
 import { mapSquarespaceFrontmatter, convertHtmlToMarkdown, deriveSlug as deriveSqSlug, readWxrItems } from './squarespace.js';
+import { mapSubstackFrontmatter, convertHtmlToMarkdown as convertSubstackHtml, readSubstackPosts } from './substack.js';
 import { mapNextFrontmatter, rewriteNextLink, rewriteNextImage, rewriteNextHead, deriveSlug as deriveNextSlug } from './next.js';
 
 // ── MDX rewriting ─────────────────────────────────────────────────────
@@ -328,6 +329,55 @@ export function writeSquarespaceCollections(manifest: Manifest, targetDir: strin
     const slug = deriveSqSlug(item);
     const outDir = item.postType === 'page' ? pagesDir : blogDir;
     const body = convertHtmlToMarkdown(item.content);
+    const outPath = resolve(outDir, `${slug}.md`);
+
+    if (!dryRun) {
+      mkdirSync(dirname(outPath), { recursive: true });
+      writeFileSync(outPath, serializeFrontmatter(astroFm) + body, 'utf-8');
+    }
+    written++;
+  }
+
+  if (!dryRun) {
+    writeContentConfig(targetDir, manifest);
+    writeAstroConfig(targetDir, manifest);
+  }
+  return { written, skippedDrafts };
+}
+
+// ── Substack collection writer ──────────────────────────────────────────
+
+export interface SubstackCollectionResult { written: number; skippedDrafts: number }
+
+export function writeSubstackCollections(manifest: Manifest, targetDir: string, dryRun: boolean, heroStrategy: 'first-image' | 'none' = 'first-image'): SubstackCollectionResult {
+  let written = 0;
+  let skippedDrafts = 0;
+
+  const blogDir = resolve(targetDir, 'src/content/blog');
+  const pagesDir = resolve(targetDir, 'src/content/pages');
+  const podcastDir = resolve(targetDir, 'src/content/podcast');
+  const threadsDir = resolve(targetDir, 'src/content/threads');
+  const assetsDir = resolve(targetDir, 'src/assets/blog');
+
+  if (!dryRun) {
+    mkdirSync(blogDir, { recursive: true });
+    mkdirSync(pagesDir, { recursive: true });
+    mkdirSync(podcastDir, { recursive: true });
+    mkdirSync(threadsDir, { recursive: true });
+    mkdirSync(assetsDir, { recursive: true });
+  }
+
+  const posts = readSubstackPosts(targetDir);
+  for (const post of posts) {
+    if (!post.isPublished) {
+      skippedDrafts++;
+    }
+
+    const astroFm = mapSubstackFrontmatter(post, heroStrategy);
+    const slug = post.slug;
+    const collection = post.type === 'page' ? 'pages' : post.type === 'podcast' ? 'podcast' : post.type === 'thread' ? 'threads' : 'blog';
+    const outDir = collection === 'pages' ? pagesDir : collection === 'podcast' ? podcastDir : collection === 'threads' ? threadsDir : blogDir;
+    const body = convertSubstackHtml(post.html);
     const outPath = resolve(outDir, `${slug}.md`);
 
     if (!dryRun) {

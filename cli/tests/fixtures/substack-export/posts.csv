@@ -1,0 +1,7 @@
+post_id,title,subtitle,url,post_date,is_published,audience,type,audio_url,podcast_duration,podcast_url
+12345.leaving-the-walled-garden,Leaving the Walled Garden,Why we moved our newsletter off a hosted platform,https://my-pub.substack.com/p/leaving-the-walled-garden,2025-11-18,true,,newsletter,,,
+67890.harbor-notes,Harbor Notes,First impressions after leaving the builder,https://my-pub.substack.com/p/harbor-notes,2025-09-30,true,,newsletter,,,
+11112.about-us,About Us,,https://my-pub.substack.com/p/about-us,2025-01-01,true,,page,,,
+22223.podcast-episode-one,Podcast Episode One,Our inaugural podcast episode,https://my-pub.substack.com/p/podcast-episode-one,2025-08-15,true,only_paid,podcast,https://cdn.substack.com/audio/episode1.mp3,1800,https://my-pub.substack.com/p/podcast-episode-one
+33334.work-in-progress,Work in Progress,,2025-12-01,false,,newsletter,,,
+44445.community-thread,Community Thread,,https://my-pub.substack.com/p/community-thread,2025-07-20,true,only_free,thread,,,

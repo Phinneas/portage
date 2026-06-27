@@ -8,8 +8,9 @@ import { writeManifest, readManifest } from './manifest.js';
 import { extractGatsby, mapPluginsToAstro } from './gatsby.js';
 import { extractJekyll, transformJekyllContent, mapJekyllPluginsToAstro } from './jekyll.js';
 import { extractSquarespace, mapSquarespaceFeaturesToAstro, writeWxrItems as writeWxrItemsSidecar, downloadAllCdnImages } from './squarespace.js';
+import { extractSubstack, mapSubstackFeaturesToAstro, writeSubstackPosts, downloadAllCdnImages as downloadSubstackCdnImages } from './substack.js';
 import { extractNext, transformNextContent, mapNextPluginsToAstro } from './next.js';
-import { transformContent, rewriteMdx, writeCollections, localizeAssets, writeRedirects, writeSquarespaceCollections } from './astro-writer.js';
+import { transformContent, rewriteMdx, writeCollections, localizeAssets, writeRedirects, writeSquarespaceCollections, writeSubstackCollections } from './astro-writer.js';
 
 const program = new Command();
 
@@ -22,27 +23,34 @@ program
 
 program.command('extract')
   .description('Extract content, structure, and metadata from a source platform')
-  .requiredOption('--from <platform>', 'Source platform (gatsby, jekyll, squarespace, next)')
+  .requiredOption('--from <platform>', 'Source platform (gatsby, jekyll, squarespace, substack, next)')
   .requiredOption('--to <dir>', 'Target directory for the Astro project')
   .option('--source <dir>', 'Source project directory (defaults to current directory)')
-  .option('--export <path>', 'Squarespace WXR export file')
-  .option('--crawl <url>', 'Crawl live Squarespace site for missing pages')
-  .option('--route-base <path>', 'Squarespace blog URL prefix', '/blog')
-  .option('--hero <strategy>', 'Squarespace hero derivation (first-image, none)', 'first-image')
+  .option('--export <path>', 'Squarespace WXR / Substack ZIP export file')
+  .option('--url <url>', 'Substack publication URL (for image download)')
+  .option('--crawl <url>', 'Crawl live site for missing pages or SEO metadata')
+  .option('--route-base <path>', 'Squarespace/Substack blog URL prefix', '/blog')
+  .option('--hero <strategy>', 'Hero derivation strategy (first-image, og-image, none)', 'first-image')
   .option('--router <type>', 'Next.js router type (pages, app)', 'pages')
   .option('--queries <glob>', 'Glob pattern for GraphQL query files', 'src/templates/**/*.{js,jsx,ts,tsx}')
   .option('--include-drafts', 'Include draft content', false)
+  .option('--include-threads', 'Include Substack thread-type posts', false)
   .option('--dry-run', 'Plan and diff only; write nothing', false)
   .option('--gatsby-env <env>', 'Environment for gatsby-config function evaluation', 'production')
   .option('--permalink-style <style>', 'Jekyll permalink handling (flat, original, preserve)', 'flat')
   .action(async (opts) => {
-    if (!['gatsby', 'jekyll', 'squarespace', 'next'].includes(opts.from)) {
-      console.error(chalk.red(`✗ Unsupported platform: ${opts.from}. Supported: gatsby, jekyll, squarespace, next`));
+    if (!['gatsby', 'jekyll', 'squarespace', 'substack', 'next'].includes(opts.from)) {
+      console.error(chalk.red(`✗ Unsupported platform: ${opts.from}. Supported: gatsby, jekyll, squarespace, substack, next`));
       process.exit(1);
     }
 
     if (opts.from === 'squarespace' && !opts.export) {
       console.error(chalk.red('✗ Squarespace requires --export <path> pointing to the WXR XML file'));
+      process.exit(1);
+    }
+
+    if (opts.from === 'substack' && !opts.export) {
+      console.error(chalk.red('✗ Substack requires --export <path> pointing to the ZIP export file'));
       process.exit(1);
     }
 
@@ -69,6 +77,25 @@ program.command('extract')
         if (!dryRun) {
           if (!existsSync(resolve(opts.to))) mkdirSync(resolve(opts.to), { recursive: true });
           writeWxrItemsSidecar(result.wxrItems, opts.to);
+        }
+      } else if (opts.from === 'substack') {
+        const result = await extractSubstack({
+          export: opts.export,
+          to: opts.to,
+          url: opts.url,
+          crawl: opts.crawl,
+          routeBase: opts.routeBase,
+          hero: opts.hero,
+          dryRun: opts.dryRun,
+          includeDrafts: opts.includeDrafts,
+          includeThreads: opts.includeThreads,
+        });
+        manifest = result.manifest;
+        dryRun = result.dryRun;
+        // Write Substack posts sidecar for the load phase
+        if (!dryRun) {
+          if (!existsSync(resolve(opts.to))) mkdirSync(resolve(opts.to), { recursive: true });
+          writeSubstackPosts(result.posts, opts.to);
         }
       } else if (opts.from === 'jekyll') {
         const result = await extractJekyll({ source: sourceDir, to: opts.to, dryRun: opts.dryRun, includeDrafts: opts.includeDrafts, permalinkStyle: opts.permalinkStyle });
@@ -132,7 +159,7 @@ program.command('transform')
         spinner.fail(chalk.red('No portage.manifest.json found. Run `portage extract` first.'));
         process.exit(1);
       }
-      if (manifest.source.platform !== 'gatsby' && manifest.source.platform !== 'jekyll' && manifest.source.platform !== 'squarespace' && manifest.source.platform !== 'next') {
+      if (manifest.source.platform !== 'gatsby' && manifest.source.platform !== 'jekyll' && manifest.source.platform !== 'squarespace' && manifest.source.platform !== 'substack' && manifest.source.platform !== 'next') {
         spinner.fail(chalk.red(`This manifest is for ${manifest.source.platform}, which is not yet supported by the transform command.`));
         process.exit(1);
       }
@@ -142,9 +169,7 @@ program.command('transform')
         fieldResult = transformJekyllContent(manifest);
       } else if (manifest.source.platform === 'next') {
         fieldResult = transformNextContent(manifest);
-      } else if (manifest.source.platform === 'squarespace') {
-        // For Squarespace, we need to re-parse the WXR to get items for transform
-        // The manifest stores counts but we need the actual data
+      } else if (manifest.source.platform === 'squarespace' || manifest.source.platform === 'substack') {
         fieldResult = { mapped: 0, rewrites: [] };
       } else {
         fieldResult = transformContent(manifest);
@@ -160,6 +185,8 @@ program.command('transform')
         ? mapJekyllPluginsToAstro(manifest.extract.plugins)
         : manifest.source.platform === 'squarespace'
         ? mapSquarespaceFeaturesToAstro(manifest.extract.plugins)
+        : manifest.source.platform === 'substack'
+        ? mapSubstackFeaturesToAstro(manifest.extract.plugins)
         : manifest.source.platform === 'next'
         ? mapNextPluginsToAstro(manifest.extract.plugins)
         : mapPluginsToAstro(manifest.extract.plugins);
@@ -217,8 +244,10 @@ program.command('load')
       let cdnResult: { downloaded: number; skipped: number; failed: number; errors: string[] } | undefined;
       if (manifest.source.platform === 'squarespace') {
         collectionResult = writeSquarespaceCollections(manifest, targetDir, opts.dryRun, opts.hero as 'first-image' | 'none');
-        // Download CDN images for Squarespace
         cdnResult = await downloadAllCdnImages(manifest, targetDir, opts.dryRun);
+      } else if (manifest.source.platform === 'substack') {
+        collectionResult = writeSubstackCollections(manifest, targetDir, opts.dryRun, opts.hero as 'first-image' | 'none');
+        cdnResult = await downloadSubstackCdnImages(manifest, targetDir, opts.dryRun);
       } else {
         collectionResult = writeCollections(manifest, targetDir, opts.dryRun);
       }
