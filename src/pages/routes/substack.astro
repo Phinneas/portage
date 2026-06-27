@@ -2,8 +2,8 @@
 import SpecLayout from '../../layouts/SpecLayout.astro';
 
 const meta = [
-  { k: 'Source', v: 'Substack export' },
-  { k: 'Method', v: 'Archive (HTML + CSV)', cy: true },
+  { k: 'Source', v: 'Substack' },
+  { k: 'Method', v: 'ZIP export (CSV + HTML)', cy: true },
   { k: 'Output', v: 'Markdown · MDX' },
   { k: 'Target', v: 'Content collections', cy: true },
   { k: 'Spec rev', v: '2026.06 · r1' },
@@ -11,7 +11,7 @@ const meta = [
 
 const toc = [
   { id: 's01', num: '01', label: 'Overview' },
-  { id: 's02', num: '02', label: 'Export' },
+  { id: 's02', num: '02', label: 'Extraction' },
   { id: 's03', num: '03', label: 'Content mapping' },
   { id: 's04', num: '04', label: 'Transforms' },
   { id: 's05', num: '05', label: 'Assets' },
@@ -26,65 +26,112 @@ const toc = [
 
 <SpecLayout
   title="Route Spec — Substack → Astro · Portage"
-  description="Portage route specification: migrating a Substack publication to Astro from the export archive (HTML + CSV). Field mapping, content cleanup, assets, routes and redirects, limitations, edge cases, output schema, and CLI."
+  description="Portage route specification: migrating a Substack newsletter to Astro. ZIP export parsing, CSV + HTML correlation, CDN image download, mention conversion, subscribe-button removal, and CLI."
   origin="Substack"
   status="beta"
-  lede="A crossing for a Substack publication: newsletter posts, subtitles, images, and footnotes mapped to Astro content collections from the export archive — with subscribe widgets, paywall CTAs, and share buttons stripped out."
+  lede="A crossing for the Substack writer who wants to own their own site: posts, pages, podcasts, and threads from a ZIP export mapped to Astro content collections. The export is text-only — images live on Substack's CDN and must be downloaded while the publication is still live."
   meta={meta}
   toc={toc}
 >
   <section class="spec-sec" id="s01">
     <h2><span class="num">01</span>Overview</h2>
-    <p>This route carries a Substack publication into an Astro project as <strong>content collections</strong> backed by Markdown or MDX. Substack has no stable public API, so the source of truth is the <strong>export archive</strong> — a ZIP of rendered post HTML plus a <code>posts.csv</code> metadata table.</p>
-    <p>Substack's HTML is heavy with growth chrome — subscribe widgets, share buttons, paywall calls-to-action, comment prompts. The bulk of this route is <strong>cleanup</strong>: reducing each post to the article itself, then converting to clean Markdown with footnotes intact.</p>
+    <p>This route carries a Substack newsletter into an Astro project as <strong>content collections</strong> backed by Markdown or MDX files. The source is Substack's <strong>ZIP export</strong> — a single downloadable archive containing a CSV of post metadata and a directory of HTML body files.</p>
+    <p>Substack's export is deliberately narrow: it carries post text and metadata, but <strong>no images, no subscriber data, and no theme</strong>. All images are served from <code>substackcdn.com</code> and must be downloaded separately while the publication is live. This is the same constraint the Squarespace route faces with CDN-hosted assets, and Portage handles it the same way.</p>
     <div class="note keep">
       <span class="lbl">Moves intact</span>
-      <p>Published posts, subtitles, body content, inline images, footnotes, publish dates, audience (free / paid) flags, and canonical post URLs.</p>
+      <p>Published posts, pages, podcast episodes, thread posts, subtitles, canonical URLs, publish dates, audience visibility, and inline image references (downloaded and rehosted).</p>
+    </div>
+    <div class="note warn">
+      <span class="lbl">Time-sensitive</span>
+      <p>Image download requires the Substack publication to still be live. Once a publication is deleted, <code>substackcdn.com</code> image links break permanently. Run the migration <strong>before</strong> decommissioning the source publication.</p>
     </div>
   </section>
 
   <section class="spec-sec" id="s02">
-    <h2><span class="num">02</span>Export</h2>
-    <p>From <code>Settings → Exports → Create a new export</code>, Substack emails a download link to a ZIP. Portage joins each post's HTML to its metadata row in <code>posts.csv</code> by <code>post_id</code>.</p>
+    <h2><span class="num">02</span>Extraction</h2>
+    <p>Substack generates the export from <code>Settings → Exports → Create new export</code>. The download is a ZIP file with a known structure. Portage unzips it, reads the CSV for metadata, reads each HTML file for body content, and joins them by <code>post_id</code>.</p>
+    <h3>A · ZIP structure</h3>
     <div class="code">
-      <div class="code-bar"><span class="name">export archive</span><span class="meta">zip</span></div>
-      <pre is:raw>substack-export/
-├── posts.csv               <span class="c">← post_id, title, subtitle, post_date,</span>
-│                           <span class="c">  type, audience, is_published, email_sent</span>
-├── posts/
-│   ├── 148210.leaving-the-feed.html
-│   └── <span class="c">… one HTML file per post</span>
-└── email_list.csv          <span class="c">← subscribers (out of scope — §07)</span></pre>
+      <div class="code-bar"><span class="name">substack export zip</span><span class="meta">tree</span></div>
+      <pre is:raw>substack-export.zip
+├── posts.csv                 <span class="c">← metadata for every post</span>
+└── posts/                    <span class="c">← one HTML file per post</span>
+    ├── 12345.leaving-the-walled-garden.html
+    ├── 67890.harbor-notes.html
+    └── <span class="c">…</span></pre>
     </div>
+    <h3>B · CSV fields</h3>
+    <p>The <code>posts.csv</code> file contains one row per post with the following columns:</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>CSV column</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">post_id</span></td><td><span class="ty">string</span></td><td>Numeric prefix of the HTML filename. Used to correlate CSV row with <code>posts/{post_id}.{slug}.html</code>.</td></tr>
+          <tr><td><span class="gf">title</span></td><td><span class="ty">string</span></td><td>Post title. May contain special characters that need escaping for YAML frontmatter.</td></tr>
+          <tr><td><span class="gf">subtitle</span></td><td><span class="ty">string</span></td><td>Subtitle / description. HTML-decoded before mapping.</td></tr>
+          <tr><td><span class="gf">url</span></td><td><span class="ty">url</span></td><td>Canonical Substack URL (<code>https://pub.substack.com/p/slug</code>). Used for redirect generation.</td></tr>
+          <tr><td><span class="gf">post_date</span></td><td><span class="ty">date</span></td><td>Publish date. Used for <code>pubDate</code>, <code>createdAt</code>, and <code>updatedAt</code>.</td></tr>
+          <tr><td><span class="gf">is_published</span></td><td><span class="ty">string</span></td><td><code>"true"</code> or <code>"false"</code>. Maps to draft status.</td></tr>
+          <tr><td><span class="gf">audience</span></td><td><span class="ty">string</span></td><td>Access level: <code>only_paid</code>, <code>only_free</code>, or absent (public).</td></tr>
+          <tr><td><span class="gf">type</span></td><td><span class="ty">string</span></td><td>Content type: <code>newsletter</code>, <code>page</code>, <code>podcast</code>, <code>thread</code>. Determines target collection.</td></tr>
+          <tr><td><span class="gf">audio_url</span></td><td><span class="ty">url</span></td><td>Podcast audio file URL (podcast type only).</td></tr>
+          <tr><td><span class="gf">podcast_duration</span></td><td><span class="ty">number</span></td><td>Duration in seconds (podcast type only).</td></tr>
+          <tr><td><span class="gf">podcast_url</span></td><td><span class="ty">url</span></td><td>Podcast episode URL (podcast type only).</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>C · HTML body files</h3>
+    <p>Each file in <code>posts/</code> is named <code>{post_id}.{slug}.html</code> and contains the full post body as rendered HTML. The slug in the filename is the canonical Substack slug. Portage reads every <code>.html</code> file in <code>posts/</code> and matches it to the CSV row by <code>post_id</code>.</p>
     <div class="code">
-      <div class="code-bar"><span class="name">extract · archive</span><span class="meta">bash</span></div>
+      <div class="code-bar"><span class="name">extract · zip</span><span class="meta">bash</span></div>
       <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> substack \
     <span class="fl">--export</span> ./substack-export.zip <span class="fl">--to</span> ./astro-project
-<span class="out">→ 88 posts · 84 web · 4 paid (truncated) · 152 images referenced</span></pre>
+<span class="out">→ 84 posts · 3 pages · 2 podcasts · 5 threads · 142 images referenced</span></pre>
+    </div>
+    <h3>D · Crawl fallback</h3>
+    <p>The ZIP export carries no SEO metadata, no <code>og:image</code>, and no author profile data. An optional <code>--crawl</code> flag supplements the ZIP by scraping the live publication's pages for structured data (<code>og:title</code>, <code>og:description</code>, <code>og:image</code>, <code>ld+json</code> author info).</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">extract · zip + crawl</span><span class="meta">bash</span></div>
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> substack <span class="fl">--export</span> ./export.zip \
+    <span class="fl">--url</span> https://my-pub.substack.com <span class="fl">--crawl</span> <span class="fl">--to</span> ./astro-project</pre>
     </div>
     <div class="note">
       <span class="lbl">Note</span>
-      <p>The export is authoritative and offline-friendly. Unpublished drafts are included in <code>posts.csv</code> with <code>is_published=false</code> and skipped unless you pass <code>--include-drafts</code>.</p>
+      <p>The CSV does not carry body content — only metadata. The HTML files are the sole source of post bodies. If a CSV row has no matching HTML file, the post is listed as a gap in the manifest and skipped. (The Ghost migrator applies the same rule: "Only process Substack posts where its corresponding HTML file exists.")</p>
     </div>
   </section>
 
   <section class="spec-sec" id="s03">
     <h2><span class="num">03</span>Content mapping</h2>
-    <p>Metadata comes from <code>posts.csv</code>; the body comes from the matching HTML file. The filename pattern <code>&lcub;post_id&rcub;.&lcub;slug&rcub;.html</code> yields the slug.</p>
+    <p>Each Substack post becomes one Markdown/MDX file. Content types split into separate collections by the <code>type</code> field.</p>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Substack field</th><th>Source</th><th></th><th>Astro frontmatter</th><th>Notes</th></tr></thead>
+        <thead><tr><th>Substack field</th><th>Type</th><th></th><th>Astro frontmatter</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td><span class="gf">title</span></td><td><span class="ty">csv</span></td><td class="arrowcell">→</td><td><span class="af">title</span></td><td>Required.</td></tr>
-          <tr><td><span class="gf">&lcub;slug&rcub;</span></td><td><span class="ty">filename</span></td><td class="arrowcell">→</td><td><span class="af">(filename)</span></td><td>From <code>&lcub;post_id&rcub;.&lcub;slug&rcub;.html</code>.</td></tr>
-          <tr><td><span class="gf">subtitle</span></td><td><span class="ty">csv</span></td><td class="arrowcell">→</td><td><span class="af">description</span></td><td>Substack's standfirst.</td></tr>
-          <tr><td><span class="gf">(post body)</span></td><td><span class="ty">html</span></td><td class="arrowcell">→</td><td><span class="af">(body)</span></td><td>Cleaned &amp; converted — see §04.</td></tr>
-          <tr><td><span class="gf">post_date</span></td><td><span class="ty">csv</span></td><td class="arrowcell">→</td><td><span class="af">pubDate</span></td><td>Coerced by zod.</td></tr>
-          <tr><td><span class="gf">audience</span></td><td><span class="ty">csv</span></td><td class="arrowcell">→</td><td><span class="af">access</span></td><td><code>everyone</code> → public; <code>only_paid·founding</code> → members.</td></tr>
-          <tr><td><span class="gf">type</span></td><td><span class="ty">csv</span></td><td class="arrowcell">→</td><td><span class="af">type</span></td><td><code>newsletter · podcast · thread</code>.</td></tr>
-          <tr><td><span class="gf">is_published</span></td><td><span class="ty">csv</span></td><td class="arrowcell">→</td><td><span class="af">draft</span></td><td><code>false</code> → <code>draft: true</code>.</td></tr>
-          <tr><td><span class="gf">(first figure image)</span></td><td><span class="ty">html</span></td><td class="arrowcell">→</td><td><span class="af">heroImage</span></td><td>Derived — Substack has no feature-image field.</td></tr>
-          <tr><td><span class="gf">canonical</span></td><td><span class="ty">derived</span></td><td class="arrowcell">→</td><td><span class="af">canonicalURL</span></td><td><code>&lcub;publication&rcub;/p/&lcub;slug&rcub;</code>.</td></tr>
+          <tr><td><span class="gf">title</span></td><td><span class="ty">string</span></td><td class="arrowcell">→</td><td><span class="af">title</span></td><td>Required. HTML-decoded, YAML-escaped.</td></tr>
+          <tr><td><span class="gf">subtitle</span></td><td><span class="ty">string</span></td><td class="arrowcell">→</td><td><span class="af">description</span></td><td>HTML-decoded. Falls back to generated excerpt.</td></tr>
+          <tr><td><span class="gf">(filename slug)</span></td><td><span class="ty">string</span></td><td class="arrowcell">→</td><td><span class="af">(filename)</span></td><td>Extracted from HTML filename: <code>{post_id}.{slug}.html</code> → <code>{slug}.md</code>.</td></tr>
+          <tr><td><span class="gf">(html body)</span></td><td><span class="ty">html</span></td><td class="arrowcell">→</td><td><span class="af">(body)</span></td><td>Converted to Markdown/MDX — see §04.</td></tr>
+          <tr><td><span class="gf">post_date</span></td><td><span class="ty">date</span></td><td class="arrowcell">→</td><td><span class="af">pubDate</span></td><td>ISO 8601, coerced by zod.</td></tr>
+          <tr><td><span class="gf">is_published</span></td><td><span class="ty">string</span></td><td class="arrowcell">→</td><td><span class="af">draft</span></td><td><code>"false"</code> → <code>draft: true</code>.</td></tr>
+          <tr><td><span class="gf">audience</span></td><td><span class="ty">enum</span></td><td class="arrowcell">→</td><td><span class="af">access</span></td><td><code>only_paid</code> → <code>paid</code>; <code>only_free</code> → <code>members</code>; absent → <code>public</code>.</td></tr>
+          <tr><td><span class="gf">type</span></td><td><span class="ty">enum</span></td><td class="arrowcell">→</td><td><span class="af">(collection)</span></td><td><code>newsletter</code> → blog; <code>page</code> → pages; <code>podcast</code> → podcast; <code>thread</code> → threads.</td></tr>
+          <tr><td><span class="gf">url</span></td><td><span class="ty">url</span></td><td class="arrowcell">→</td><td><span class="af">canonicalURL</span></td><td>Preserves the original Substack URL as the canonical.</td></tr>
+          <tr><td><span class="gf">audio_url</span></td><td><span class="ty">url</span></td><td class="arrowcell">→</td><td><span class="af">audioUrl</span></td><td>Podcast episodes only. Downloaded and rehosted if <code>--podcast-audio download</code>.</td></tr>
+          <tr><td><span class="gf">podcast_duration</span></td><td><span class="ty">number</span></td><td class="arrowcell">→</td><td><span class="af">audioDuration</span></td><td>Seconds. Podcast episodes only.</td></tr>
+          <tr><td><span class="gf">(og:image via crawl)</span></td><td><span class="ty">url</span></td><td class="arrowcell">→</td><td><span class="af">heroImage</span></td><td>Only when <code>--crawl</code> is on. Falls back to first inline image.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Content type → collection mapping</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Substack type</th><th>Astro collection</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">newsletter</span></td><td><span class="af">blog</span></td><td>Standard posts. Default content type.</td></tr>
+          <tr><td><span class="gf">page</span></td><td><span class="af">pages</span></td><td>Static pages (About, FAQ, etc.).</td></tr>
+          <tr><td><span class="gf">podcast</span></td><td><span class="af">podcast</span></td><td>Audio episodes. Includes <code>audioUrl</code> and <code>audioDuration</code> fields.</td></tr>
+          <tr><td><span class="gf">thread</span></td><td><span class="af">threads</span></td><td>Discussion threads. Body may contain reply-chain HTML.</td></tr>
         </tbody>
       </table>
     </div>
@@ -92,108 +139,152 @@ const toc = [
 
   <section class="spec-sec" id="s04">
     <h2><span class="num">04</span>Content transforms</h2>
-    <p>This is the heavy lifting. Substack wraps articles in <code>.available-content</code> markup interleaved with growth widgets. Portage strips the chrome, keeps the article, converts to Markdown, and preserves footnotes.</p>
+    <p>Substack stores body content as <strong>rendered HTML</strong> — no structured AST like Ghost's Lexical or Mobiledoc. This is simpler to parse than a custom AST but requires cleanup of Substack-specific markup. Portage uses <code>turndown</code> for the HTML-to-Markdown conversion (same library as the Squarespace route) and applies Substack-specific transforms before and after.</p>
+    <h3>A · Pre-turndown cleanup</h3>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Substack element</th><th></th><th>Result</th></tr></thead>
+        <thead><tr><th>Substack markup</th><th></th><th>Transform</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td><span class="gf">subscribe widget</span></td><td class="arrowcell">→</td><td>Removed</td></tr>
-          <tr><td><span class="gf">share / "leave a comment" buttons</span></td><td class="arrowcell">→</td><td>Removed</td></tr>
-          <tr><td><span class="gf">"Thanks for reading… Subscribe" footer</span></td><td class="arrowcell">→</td><td>Removed</td></tr>
-          <tr><td><span class="gf">paywall marker (.paywall)</span></td><td class="arrowcell">→</td><td>Boundary recorded; body flagged if truncated</td></tr>
-          <tr><td><span class="gf">captioned image (.captioned-image)</span></td><td class="arrowcell">→</td><td><code>![alt](src)</code> + caption / <span class="af">&lt;Figure&gt;</span></td></tr>
-          <tr><td><span class="gf">footnotes (.footnote-anchor)</span></td><td class="arrowcell">→</td><td>Markdown footnotes <code>[^1]</code></td></tr>
-          <tr><td><span class="gf">pullquote / blockquote</span></td><td class="arrowcell">→</td><td>Blockquote</td></tr>
-          <tr><td><span class="gf">tweet / YouTube / embedded post</span></td><td class="arrowcell">→</td><td>Link fallback / <span class="af">&lt;Embed&gt;</span></td></tr>
+          <tr><td><span class="gf">&lt;span class="mention-wrap"&gt;</span></td><td class="arrowcell">→</td><td><code>@{name}</code> text</td><td>Extract <code>name</code> from <code>data-attrs</code> JSON. Render as plain text with <code>@</code> prefix.</td></tr>
+          <tr><td><span class="gf">Subscribe buttons</span></td><td class="arrowcell">→</td><td>Removed</td><td><code>&lt;div class="subscribe-widget"&gt;</code> and inline subscribe CTA links stripped. Optional replacement link via <code>--subscribe-link</code>.</td></tr>
+          <tr><td><span class="gf">Comment links</span></td><td class="arrowcell">→</td><td>Rewritten or removed</td><td><code>/comments</code> anchors rewritten to <code>--comment-link</code> value, or removed with <code>--no-comments</code>.</td></tr>
+          <tr><td><span class="gf">Inline styles</span></td><td class="arrowcell">→</td><td>Stripped</td><td>Substack injects <code>style</code> attributes for font, color, and margin. These are stripped to leave semantic markup.</td></tr>
+          <tr><td><span class="gf">Substack embeds</span></td><td class="arrowcell">→</td><td>Link fallback</td><td>Embedded Substack posts or other Substack content rendered as plain links to the original URL.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>B · Post-turndown transforms</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Pattern</th><th></th><th>Output (Markdown)</th><th>Output (MDX)</th></tr></thead>
+        <tbody>
+          <tr><td><span class="gf">Image + caption</span></td><td class="arrowcell">→</td><td><code>![alt](local-path)</code> + italic caption</td><td><span class="af">&lt;Figure&gt;</span></td></tr>
+          <tr><td><span class="gf">YouTube / Vimeo embed</span></td><td class="arrowcell">→</td><td>Link fallback</td><td><span class="af">&lt;Embed&gt;</span></td></tr>
+          <tr><td><span class="gf">Code block</span></td><td class="arrowcell">→</td><td>Fenced block with language</td><td>Fenced block</td></tr>
+          <tr><td><span class="gf">Blockquote</span></td><td class="arrowcell">→</td><td>Blockquote</td><td>Blockquote</td></tr>
+          <tr><td><span class="gf">Button / CTA link</span></td><td class="arrowcell">→</td><td>Markdown link</td><td><span class="af">&lt;Button&gt;</span></td></tr>
         </tbody>
       </table>
     </div>
     <div class="note">
-      <span class="lbl">Stripping CTAs</span>
-      <p><code>--strip-cta</code> (default on) removes Substack's subscribe / share / comment chrome. Disable it with <code>--strip-cta=false</code> if you want to triage the widgets by hand.</p>
+      <span class="lbl">HTML vs. structured content</span>
+      <p>Substack's HTML is simpler to parse than Ghost's Lexical or Mobiledoc AST, but it carries more presentation residue (inline styles, Substack-specific class names, proprietary mention spans). The pre-turndown cleanup step strips this residue before conversion, producing cleaner Markdown than a naive HTML-to-Markdown pass would.</p>
     </div>
   </section>
 
   <section class="spec-sec" id="s05">
     <h2><span class="num">05</span>Assets</h2>
-    <p>Substack images are referenced through a CDN <strong>fetch proxy</strong> that wraps the real source URL — for example <code>substackcdn.com/image/fetch/w_1456,…/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2F…png</code>. Portage decodes the embedded origin, downloads the original, and rewrites the path.</p>
+    <p>Substack's export contains <strong>no image or media files</strong>. All images are served from <code>substackcdn.com</code>, backed by S3 at <code>substack-post-media.s3.amazonaws.com</code>. Portage downloads every referenced image and rewrites the path to a local file.</p>
+    <h3>A · Image URL patterns</h3>
+    <div class="code">
+      <div class="code-bar"><span class="name">substackcdn url patterns</span><span class="meta">url</span></div>
+      <pre is:raw"><span class="c"># CDN proxy with resize parameters</span>
+https://substackcdn.com/image/fetch/{params}/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F{uuid}_{size}.ext
+
+<span class="c"># Direct S3 URL</span>
+https://substack-post-media.s3.amazonaws.com/public/images/{uuid}_{size}.ext</pre>
+    </div>
+    <h3>B · Download pipeline</h3>
     <ul>
-      <li><strong>Decode the proxy URL</strong> — the URL-encoded S3 origin after <code>/fetch/…/</code> is extracted; transform prefixes (<code>w_1456,c_limit,f_auto…</code>) are dropped.</li>
-      <li><strong>Download &amp; dedupe</strong> — originals are content-hashed; duplicates collapse to one file.</li>
-      <li><strong>Rewrite references</strong> — hero and in-body images point at local paths; Astro regenerates responsive sizes.</li>
+      <li><strong>Fetch originals</strong> — strip resize parameters; request the full-resolution source image. Astro regenerates responsive sizes via its own image pipeline.</li>
+      <li><strong>Download &amp; dedupe</strong> — each unique image is fetched once and content-hashed; duplicates collapse to a single file.</li>
+      <li><strong>Rewrite references</strong> — inline <code>&lt;img&gt;</code> <code>src</code> attributes and hero images point at local paths after download.</li>
+      <li><strong>External images</strong> — images not hosted on <code>substackcdn.com</code> or <code>substack-post-media.s3.amazonaws.com</code> stay remote unless <code>--images localize-external</code>.</li>
     </ul>
+    <h3>C · Podcast audio</h3>
+    <p>Podcast episodes reference audio files via <code>audio_url</code>. By default these are left as remote URLs. Use <code>--podcast-audio download</code> to fetch and rehost them in <code>public/audio/</code>.</p>
     <div class="note warn">
-      <span class="lbl">Substack-specific</span>
-      <p>Parsing the nested, URL-encoded proxy origin is the step that trips up most ad-hoc Substack scripts. Portage handles it as a first-class transform.</p>
+      <span class="lbl">Images are time-sensitive</span>
+      <p>Substack CDN images are only accessible while the publication exists. If the publication is deleted, all image links break permanently. This is the same constraint the Squarespace route faces with CDN images. Portage warns if the publication URL is unreachable or returns 404 for image requests.</p>
+    </div>
+    <div class="note">
+      <span class="lbl">Placement</span>
+      <p><code>--images assets</code> (default) writes to <code>src/assets/blog/</code> for full Astro optimization. <code>--images public</code> writes stable URLs to <code>public/images/</code>.</p>
     </div>
   </section>
 
   <section class="spec-sec" id="s06">
     <h2><span class="num">06</span>Routes &amp; redirects</h2>
-    <p>Substack publishes every post under <code>/p/&lcub;slug&rcub;</code>. Portage preserves old links with redirects while moving to clean Astro routes.</p>
+    <p>Substack namespaces all posts under <code>/p/{slug}</code>. Astro prefers flat slugs at <code>/{slug}/</code>. Portage generates a redirect map for every post so existing links continue to work.</p>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Substack route</th><th></th><th>Astro route</th><th>Handled by</th></tr></thead>
         <tbody>
-          <tr><td><span class="gf">/p/&lcub;slug&rcub;</span></td><td class="arrowcell">→</td><td><span class="af">/&lcub;slug&rcub;/</span></td><td>Post collection + 301 from <code>/p/&lcub;slug&rcub;</code></td></tr>
-          <tr><td><span class="gf">/archive</span></td><td class="arrowcell">→</td><td><span class="af">/</span></td><td>Index / blog listing</td></tr>
+          <tr><td><span class="gf">/p/&lcub;slug&rcub;</span></td><td class="arrowcell">→</td><td><span class="af">/blog/&lcub;slug&rcub;/</span></td><td>Blog collection + redirect from <code>/p/{slug}</code></td></tr>
+          <tr><td><span class="gf">/&lcub;page-slug&rcub;</span></td><td class="arrowcell">→</td><td><span class="af">/&lcub;page-slug&rcub;/</span></td><td>Pages collection</td></tr>
+          <tr><td><span class="gf">/podcast/&lcub;slug&rcub;</span></td><td class="arrowcell">→</td><td><span class="af">/podcast/&lcub;slug&rcub;/</span></td><td>Podcast collection</td></tr>
+          <tr><td><span class="gf">/subscribe</span></td><td class="arrowcell">→</td><td><span class="af">--subscribe-link value</span></td><td>Configurable destination</td></tr>
           <tr><td><span class="gf">/feed</span></td><td class="arrowcell">→</td><td><span class="af">/rss.xml</span></td><td><code>@astrojs/rss</code> + redirect</td></tr>
-          <tr><td><span class="gf">&lcub;domain&rcub;/p/&lcub;slug&rcub;</span></td><td class="arrowcell">→</td><td><span class="af">/&lcub;slug&rcub;/</span></td><td>Custom-domain mapping</td></tr>
         </tbody>
       </table>
     </div>
     <ul>
-      <li><strong>Keep the prefix</strong> — preserve <code>/p/&lcub;slug&rcub;</code> instead with <code>--route-base p</code>.</li>
-      <li><strong>Trailing slashes &amp; sitemap</strong> — <code>trailingSlash: 'always'</code> and <code>@astrojs/sitemap</code> set to the new base URL.</li>
+      <li><strong>/p/ prefix redirect</strong> — every Substack post URL includes <code>/p/</code>. Portage generates a redirect from <code>/p/{slug}</code> to <code>/blog/{slug}/</code> (or <code>/{slug}/</code> with <code>--route-base /</code>) so inbound links survive the crossing.</li>
+      <li><strong>Trailing slashes</strong> — Substack does not use them; Astro can. Portage sets <code>trailingSlash: 'always'</code> and generates redirects from the non-trailing-slash Substack URLs.</li>
+      <li><strong>Redirect map</strong> — emitted as <code>_redirects</code> (Netlify), <code>vercel.json</code>, or Astro <code>redirects</code> config via <code>--redirects</code>.</li>
+      <li><strong>Sitemap</strong> — <code>@astrojs/sitemap</code> added and configured to the new base URL.</li>
     </ul>
+    <div class="note">
+      <span class="lbl">Ghost's redirect pattern</span>
+      <p>Ghost's built-in Substack migrator uses the regex <code>\/p\/(?![0-9a-fA-F]{8}-...)(.*)</code> to redirect <code>/p/{slug}</code> to <code>/{slug}</code> while excluding UUID-style preview URLs. Portage applies the same pattern.</p>
+    </div>
   </section>
 
   <section class="spec-sec" id="s07">
     <h2><span class="num">07</span>Out of scope</h2>
-    <p>Substack is a newsletter, payments, and community platform. Portage moves the writing; the platform machinery stays behind, and it tells you what it skipped.</p>
+    <p>Portage moves <strong>content</strong>. Substack is also a subscription, payment, and community platform, and those systems do not have a one-to-one home in a static Astro site. The following are deliberately not migrated.</p>
     <ul>
-      <li><strong>Subscribers</strong> — <code>email_list.csv</code> is carried for portability, but sign-up and auth are yours to rebuild.</li>
-      <li><strong>Paid subscriptions &amp; Stripe</strong> — billing relationships can't be migrated.</li>
-      <li><strong>Email delivery</strong> — past issues become posts; sending does not.</li>
-      <li><strong>Comments &amp; Notes</strong> — not meaningfully exported.</li>
-      <li><strong>Podcast audio</strong> — episodes link out; audio files aren't rehosted by default.</li>
-      <li><strong>Recommendations &amp; network</strong> — Substack-specific discovery features.</li>
+      <li><strong>Subscribers &amp; members</strong> — exported separately as CSV by Substack. Auth, sign-up, and gating are yours to rebuild.</li>
+      <li><strong>Paid tiers &amp; Stripe</strong> — billing relationships cannot be carried; reconnect at your new provider.</li>
+      <li><strong>Community / Chat</strong> — Substack's discussion and chat features are not in the export.</li>
+      <li><strong>Comments</strong> — not included in the export. Use a third-party system (e.g. Giscus) if needed.</li>
+      <li><strong>Theme &amp; design</strong> — Substack's layout and styling are not transferable. You rebuild presentation in Astro.</li>
+      <li><strong>Email analytics</strong> — per-post <code>.delivers.csv</code> and <code>.opens.csv</code> files in the export are delivery metrics, not content. They are not migrated.</li>
+      <li><strong>Recommendations</strong> — Substack's publication recommendation feature has no Astro equivalent.</li>
+      <li><strong>Notes</strong> — Substack Notes are not part of the export.</li>
     </ul>
     <div class="note warn">
-      <span class="lbl">Paid posts</span>
-      <p>For <code>only_paid</code> / <code>founding</code> posts, the export often contains only the free preview above the paywall. Portage writes what's present, sets <code>access: members</code> + <code>draft: true</code>, and flags any truncated body so you can re-supply the full text.</p>
+      <span class="lbl">Paid-only content</span>
+      <p>Posts with <code>audience: only_paid</code> are extracted and written with <code>access: paid</code> and <code>draft: true</code> by default, so they never publish unintentionally. Decide your gating strategy, then flip them on deliberately.</p>
     </div>
   </section>
 
   <section class="spec-sec" id="s08">
     <h2><span class="num">08</span>Edge cases</h2>
     <ul>
-      <li><strong>Paywalled posts truncated in export</strong> — flagged and gated, never published by accident.</li>
-      <li><strong>Post type</strong> — <code>podcast</code> and <code>thread</code> rows are skipped unless <code>--include-podcasts</code> / <code>--include-threads</code>.</li>
-      <li><strong>Footnotes</strong> — Substack anchors convert to Markdown footnotes.</li>
-      <li><strong>Authors</strong> — <code>posts.csv</code> lacks reliable per-post authorship; defaults to the publication, overridable via <code>--author-map</code>.</li>
-      <li><strong>Drafts</strong> — <code>is_published=false</code> rows carry <code>draft: true</code>, included only with <code>--include-drafts</code>.</li>
-      <li><strong>Image proxy URLs</strong> — nested URL-encoded S3 origins are decoded before download.</li>
-      <li><strong>Embeds</strong> — tweets and videos fall back to links, or MDX <code>&lt;Embed&gt;</code> components.</li>
+      <li><strong>CSV row with no HTML file</strong> — if a <code>post_id</code> appears in the CSV but has no matching file in <code>posts/</code>, the post is listed as a gap in the manifest and skipped. This happens with certain draft or deleted posts.</li>
+      <li><strong>HTML file with no CSV row</strong> — if an HTML file exists in <code>posts/</code> but has no matching CSV row, the post is processed using filename-derived metadata only (slug from filename, date from file modification time). Warned in the manifest.</li>
+      <li><strong>Mention spans</strong> — <code>&lt;span class="mention-wrap" data-attrs="{...}"&gt;</code> elements are Substack-proprietary. Portage extracts the <code>name</code> field from the JSON and renders as <code>@Name</code> text. If the JSON is malformed, the span is stripped and a warning is logged.</li>
+      <li><strong>Subscribe buttons in body</strong> — Substack injects subscribe CTA widgets mid-content. These are stripped by default. Use <code>--subscribe-link</code> to replace them with a link to your own signup page.</li>
+      <li><strong>Special characters in titles</strong> — colons, quotes, and other YAML-significant characters in <code>title</code> must be escaped for frontmatter. Portage wraps titles in double quotes and escapes internal quotes.</li>
+      <li><strong>Drafts</strong> — included only with <code>--include-drafts</code>. Draft posts carry <code>draft: true</code> and may lack a <code>post_date</code> (Portage falls back to file modification time).</li>
+      <li><strong>Podcast episodes without audio</strong> — if <code>audio_url</code> is empty or the URL returns 404, the episode is still written with <code>audioUrl</code> set to the broken URL and a warning logged. You can re-link the audio later.</li>
+      <li><strong>Thread reply chains</strong> — thread-type posts may contain nested reply HTML. Portage carries the HTML as-is; reply formatting may need manual cleanup.</li>
+      <li><strong>Slug collisions</strong> — a post and a page sharing a slug are namespaced by collection; conflicts are reported in the manifest.</li>
+      <li><strong>Image 404s</strong> — if a <code>substackcdn.com</code> image URL returns 404 (publication deleted, image removed), the reference is preserved as the original remote URL and a warning logged. Portage does not fail the entire migration for one broken image.</li>
     </ul>
   </section>
 
   <section class="spec-sec" id="s09">
     <h2><span class="num">09</span>Output</h2>
-    <p>A predictable, buildable Astro project, with a manifest ledger at the root.</p>
+    <p>A predictable, buildable Astro project. The manifest at the root is the full ledger of what was extracted, transformed, and written.</p>
     <div class="code">
       <div class="code-bar"><span class="name">project tree</span><span class="meta">output</span></div>
       <pre is:raw>astro-project/
 ├── src/
 │   ├── content/
-│   │   └── blog/             <span class="c">← 84 posts (4 paid gated)</span>
-│   ├── assets/blog/          <span class="c">← 131 localized images</span>
-│   ├── components/portage/   <span class="c">← MDX stubs (if --content mdx)</span>
+│   │   ├── blog/              <span class="c">← 84 posts (newsletter type)</span>
+│   │   ├── pages/             <span class="c">← 3 pages</span>
+│   │   ├── podcast/           <span class="c">← 2 podcast episodes</span>
+│   │   └── threads/           <span class="c">← 5 threads</span>
+│   ├── assets/blog/           <span class="c">← 142 localized images</span>
+│   ├── components/portage/    <span class="c">← MDX stubs (if --content mdx)</span>
 │   └── content.config.ts
-├── public/_redirects        <span class="c">← 88 /p/{slug} redirects</span>
-├── members.csv              <span class="c">← exported subscribers (reference)</span>
-├── portage.manifest.json    <span class="c">← extract / transform / load ledger</span>
-└── astro.config.mjs         <span class="c">← trailingSlash · sitemap · redirects</span></pre>
+├── public/
+│   ├── _redirects             <span class="c">← 84 /p/{slug} → /blog/{slug}/ redirects</span>
+│   └── audio/                 <span class="c">← podcast audio files (if --podcast-audio download)</span>
+├── portage.manifest.json      <span class="c">← extract / transform / load ledger</span>
+└── astro.config.mjs           <span class="c">← trailingSlash · sitemap · redirects</span></pre>
     </div>
     <h3>Content collection schema</h3>
     <div class="code">
@@ -208,54 +299,88 @@ const toc = [
     description: z.string().optional(),
     pubDate: z.coerce.date(),
     heroImage: image().optional(),
-    access: z.enum([<span class="s">'public'</span>, <span class="s">'members'</span>]).default(<span class="s">'public'</span>),
-    type: z.enum([<span class="s">'newsletter'</span>, <span class="s">'podcast'</span>, <span class="s">'thread'</span>]).default(<span class="s">'newsletter'</span>),
     draft: z.boolean().default(false),
+    access: z.enum([<span class="s">'public'</span>, <span class="s">'members'</span>, <span class="s">'paid'</span>]).default(<span class="s">'public'</span>),
     canonicalURL: z.string().url().optional(),
   }),
 });
 
-<span class="k">export const</span> collections = { blog };</pre>
+<span class="k">const</span> pages = defineCollection({
+  loader: glob({ pattern: <span class="s">'**/*.{md,mdx}'</span>, base: <span class="s">'./src/content/pages'</span> }),
+  schema: ({ image }) => z.object({
+    title: z.string(),
+    description: z.string().optional(),
+    heroImage: image().optional(),
+    draft: z.boolean().default(false),
+  }),
+});
+
+<span class="k">const</span> podcast = defineCollection({
+  loader: glob({ pattern: <span class="s">'**/*.{md,mdx}'</span>, base: <span class="s">'./src/content/podcast'</span> }),
+  schema: ({ image }) => z.object({
+    title: z.string(),
+    description: z.string().optional(),
+    pubDate: z.coerce.date(),
+    heroImage: image().optional(),
+    audioUrl: z.string().url().optional(),
+    audioDuration: z.number().optional(),
+    draft: z.boolean().default(false),
+  }),
+});
+
+<span class="k">const</span> threads = defineCollection({
+  loader: glob({ pattern: <span class="s">'**/*.{md,mdx}'</span>, base: <span class="s">'./src/content/threads'</span> }),
+  schema: z.object({
+    title: z.string(),
+    pubDate: z.coerce.date(),
+    draft: z.boolean().default(false),
+  }),
+});
+
+<span class="k">export const</span> collections = { blog, pages, podcast, threads };</pre>
     </div>
     <h3>Sample migrated post</h3>
     <div class="code">
-      <div class="code-bar"><span class="name">src/content/blog/leaving-the-feed.md</span><span class="meta">markdown</span></div>
+      <div class="code-bar"><span class="name">src/content/blog/leaving-the-walled-garden.md</span><span class="meta">markdown</span></div>
       <pre is:raw><span class="t">---</span>
-<span class="k">title:</span> <span class="s">"Leaving the Feed"</span>
-<span class="k">description:</span> <span class="s">"On owning the publish button again."</span>
-<span class="k">pubDate:</span> 2026-02-11
-<span class="k">heroImage:</span> ../../assets/blog/leaving-the-feed.jpg
+<span class="k">title:</span> <span class="s">"Leaving the Walled Garden"</span>
+<span class="k">description:</span> <span class="s">"Why we moved our newsletter off a hosted platform."</span>
+<span class="k">pubDate:</span> 2025-11-18
+<span class="k">heroImage:</span> ../../assets/blog/walled-garden.jpg
+<span class="k">draft:</span> false
 <span class="k">access:</span> public
-<span class="k">type:</span> newsletter
-<span class="k">canonicalURL:</span> <span class="s">"https://example.substack.com/p/leaving-the-feed"</span>
+<span class="k">canonicalURL:</span> <span class="s">"https://my-pub.substack.com/p/leaving-the-walled-garden"</span>
 <span class="t">---</span>
 
-The newsletter went out fine.[^1] The platform was the problem…
-
-[^1]: 11,400 sends, 64% open rate — numbers I now keep myself.</pre>
+The crossing starts at the dock, not the destination…</pre>
     </div>
   </section>
 
   <section class="spec-sec" id="s10">
     <h2><span class="num">10</span>CLI</h2>
-    <p>Three stages, run in order. Cleanup runs at transform time.</p>
+    <p>Three stages, run in order. The ZIP export is the primary source; add <code>--url</code> for image resolution and <code>--crawl</code> for SEO metadata.</p>
     <div class="code">
       <div class="code-bar"><span class="name">portage · substack → astro</span><span class="meta">bash</span></div>
-      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> substack <span class="fl">--export</span> ./substack-export.zip <span class="fl">--to</span> ./astro-project
-<span class="pr">$</span> npx portage transform <span class="fl">--schema</span> content-collections <span class="fl">--content</span> mdx <span class="fl">--strip-cta</span>
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> substack <span class="fl">--export</span> ./export.zip <span class="fl">--url</span> https://my-pub.substack.com <span class="fl">--to</span> ./astro-project
+<span class="pr">$</span> npx portage transform <span class="fl">--schema</span> content-collections <span class="fl">--content</span> markdown
 <span class="pr">$</span> npx portage load <span class="fl">--images</span> assets <span class="fl">--redirects</span> netlify</pre>
     </div>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Flag</th><th>Values</th><th>Default</th><th>Purpose</th></tr></thead>
         <tbody>
-          <tr><td><span class="gf">--export</span></td><td><span class="ty">path</span></td><td>—</td><td>Substack export ZIP. Required.</td></tr>
-          <tr><td><span class="gf">--strip-cta</span></td><td><span class="ty">flag</span></td><td><span class="ty">on</span></td><td>Remove subscribe / share / comment chrome.</td></tr>
-          <tr><td><span class="gf">--include-drafts</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Carry unpublished rows.</td></tr>
-          <tr><td><span class="gf">--include-podcasts · --include-threads</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Bring non-newsletter post types.</td></tr>
-          <tr><td><span class="gf">--author-map</span></td><td><span class="ty">path</span></td><td>—</td><td>Assign per-post authors.</td></tr>
-          <tr><td><span class="gf">--route-base</span></td><td><span class="ty">string</span></td><td><span class="ty">/</span></td><td>Flatten or keep <code>/p/</code>.</td></tr>
-          <tr><td><span class="gf">--dry-run</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Plan &amp; diff only.</td></tr>
+          <tr><td><span class="gf">--export</span></td><td><span class="ty">path</span></td><td>—</td><td>Substack ZIP export file. Required.</td></tr>
+          <tr><td><span class="gf">--url</span></td><td><span class="ty">url</span></td><td>—</td><td>Publication URL. Required for image download and link rewriting.</td></tr>
+          <tr><td><span class="gf">--crawl</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Scrape live pages for <code>og:image</code>, <code>og:description</code>, and author metadata.</td></tr>
+          <tr><td><span class="gf">--route-base</span></td><td><span class="ty">string</span></td><td><span class="ty">/blog</span></td><td>Blog route prefix. Use <code>/</code> to flatten.</td></tr>
+          <tr><td><span class="gf">--hero</span></td><td><span class="ty">og-image · first-image · none</span></td><td><span class="ty">og-image</span></td><td>How <code>heroImage</code> is derived. <code>og-image</code> requires <code>--crawl</code>; falls back to <code>first-image</code>.</td></tr>
+          <tr><td><span class="gf">--content</span></td><td><span class="ty">markdown · mdx</span></td><td><span class="ty">markdown</span></td><td>Body format &amp; block handling.</td></tr>
+          <tr><td><span class="gf">--images</span></td><td><span class="ty">assets · public · localize-external</span></td><td><span class="ty">assets</span></td><td>Image placement strategy.</td></tr>
+          <tr><td><span class="gf">--podcast-audio</span></td><td><span class="ty">remote · download</span></td><td><span class="ty">remote</span></td><td>Leave audio URLs remote or download to <code>public/audio/</code>.</td></tr>
+          <tr><td><span class="gf">--subscribe-link</span></td><td><span class="ty">path</span></td><td><span class="ty">#/portal/signup</span></td><td>Replace Substack subscribe buttons with this link. Use <code>--no-subscribe-buttons</code> to remove entirely.</td></tr>
+          <tr><td><span class="gf">--include-drafts</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Carry unpublished posts as <code>draft: true</code>.</td></tr>
+          <tr><td><span class="gf">--include-threads</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Carry thread-type posts. Excluded by default.</td></tr>
+          <tr><td><span class="gf">--dry-run</span></td><td><span class="ty">flag</span></td><td><span class="ty">off</span></td><td>Plan &amp; diff only; write nothing.</td></tr>
         </tbody>
       </table>
     </div>
@@ -263,20 +388,27 @@ The newsletter went out fine.[^1] The platform was the problem…
 
   <section class="spec-sec" id="s11">
     <h2><span class="num">11</span>Verification</h2>
-    <p>Every crossing is auditable. The dry-run is where paid-post truncation and skipped types surface — before anything is written.</p>
+    <p>Every crossing is auditable. The dry-run reconciles the ZIP content against the output so you can see exactly what moves and what needs review.</p>
     <ul>
       <li><strong>Dry-run first</strong> — <code>--dry-run</code> prints the plan and a diff; nothing is written.</li>
-      <li><strong>Manifest ledger</strong> — records each <code>post_id</code>, its checksum, transforms applied, and whether the body was truncated at a paywall.</li>
-      <li><strong>Counted on, counted off</strong> — gated, skipped, and truncated posts are listed explicitly.</li>
+      <li><strong>CSV ↔ HTML reconciliation</strong> — the manifest records whether each post had both a CSV row and an HTML file. Gaps (CSV-only or HTML-only) are listed explicitly.</li>
+      <li><strong>Image download audit</strong> — every image URL is tested for reachability before download. 404s are listed with the post they belong to so you can identify broken references.</li>
+      <li><strong>Counted on, counted off</strong> — extract and load counts are reconciled; any delta (skipped drafts, paid-only content, broken images) is listed explicitly.</li>
+      <li><strong>Mention audit</strong> — every mention span found is listed with the extracted <code>@name</code>. Malformed mentions are flagged.</li>
     </ul>
     <div class="code">
       <div class="code-bar"><span class="name">portage load --dry-run</span><span class="meta">bash</span></div>
-      <pre is:raw><span class="pr">$</span> npx portage load <span class="fl">--dry-run</span>
-<span class="out">→ 88 posts → 84 files          ✓ (2 threads, 2 podcasts skipped)</span>
-<span class="out">→ 152 images → 131 unique      ✓ proxy URLs decoded</span>
-<span class="out">→ 88 redirects from /p/{slug}  ✓</span>
-<span class="out">→ 4 paid posts gated           ⚠ access: members · bodies truncated</span>
-<span class="out">→ 0 unresolved references      ✓ nothing left on the dock</span></pre>
+      <pre is:raw"><span class="pr">$</span> npx portage load <span class="fl">--dry-run</span>
+<span class="out">→ 84 posts → 84 files               ✓ reconciled</span>
+<span class="out">→ 3 pages → 3 files                 ✓</span>
+<span class="out">→ 2 podcasts → 2 files              ✓</span>
+<span class="out">→ 5 threads (skipped)               ⚠ use --include-threads to carry</span>
+<span class="out">→ 142 images → 128 unique           ✓ deduped</span>
+<span class="out">→ 3 image 404s                      ⚠ publication may be gone; remote refs preserved</span>
+<span class="out">→ 12 /p/ redirects mapped           ✓</span>
+<span class="out">→ 6 paid posts gated                ⚠ review access: paid</span>
+<span class="out">→ 4 mentions converted              ✓</span>
+<span class="out">→ 0 unresolved references           ✓ nothing left on the dock</span></pre>
     </div>
   </section>
 </SpecLayout>
