@@ -70,6 +70,12 @@ describe('findTemplate', () => {
     expect(t!.slug).toBe('astro-payload');
   });
 
+  it('matches squarespace → sanity to astro-sanity', () => {
+    const t = findTemplate('squarespace', 'sanity');
+    expect(t).not.toBeNull();
+    expect(t!.slug).toBe('astro-sanity');
+  });
+
   it('matches contentful → sanity to astro-sanity', () => {
     const t = findTemplate('contentful', 'sanity');
     expect(t).not.toBeNull();

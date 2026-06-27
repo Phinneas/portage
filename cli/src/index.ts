@@ -11,6 +11,7 @@ import { extractSquarespace, mapSquarespaceFeaturesToAstro, writeWxrItems as wri
 import { extractSubstack, mapSubstackFeaturesToAstro, writeSubstackPosts, downloadAllCdnImages as downloadSubstackCdnImages } from './substack.js';
 import { extractGhost, mapGhostFeaturesToAstro, writeGhostExport } from './ghost.js';
 import { writePayloadSeed, downloadAllGhostImages } from './payload-writer.js';
+import { writeSanityOutput, downloadSqspImagesForSanity } from './sanity-writer.js';
 import { extractNext, transformNextContent, mapNextPluginsToAstro } from './next.js';
 import { generateHandoff, generateMigrationReport, writeMigrationReport } from './creatives.js';
 import { transformContent, rewriteMdx, writeCollections, localizeAssets, writeRedirects, writeSquarespaceCollections, writeSubstackCollections } from './astro-writer.js';
@@ -31,7 +32,7 @@ program.command('extract')
   .option('--source <dir>', 'Source project directory (defaults to current directory)')
   .option('--export <path>', 'Squarespace WXR / Substack ZIP / Ghost JSON export file')
   .option('--url <url>', 'Substack publication URL / Ghost site URL (for image resolution)')
-  .option('--target <platform>', 'Destination platform (astro, payload)', 'astro')
+  .option('--target <platform>', 'Destination platform (astro, payload, sanity)', 'astro')
   .option('--crawl <url>', 'Crawl live site for missing pages or SEO metadata')
   .option('--route-base <path>', 'Squarespace/Substack blog URL prefix', '/blog')
   .option('--hero <strategy>', 'Hero derivation strategy (first-image, og-image, none)', 'first-image')
@@ -249,8 +250,9 @@ program.command('load')
   .description('Write transformed content into an Astro project')
   .option('--images <strategy>', 'Image placement: assets, public, localize-external', 'assets')
   .option('--redirects <format>', 'Redirect format: netlify, vercel, astro', 'astro')
-  .option('--target <platform>', 'Destination platform (astro, payload)', 'astro')
+  .option('--target <platform>', 'Destination platform (astro, payload, sanity)', 'astro')
   .option('--method <method>', 'Load method: seed, rest', 'seed')
+  .option('--id-strategy <strategy>', 'Sanity ID strategy: prefix, original', 'prefix')
   .option('--payload-url <url>', 'Payload REST API base URL (rest method)', 'http://localhost:3000')
   .option('--ghost-url <url>', 'Ghost site URL for resolving __GHOST_URL__ placeholders')
   .option('--hero <strategy>', 'Squarespace hero derivation (first-image, none)', 'first-image')
@@ -273,10 +275,20 @@ program.command('load')
       let collectionResult;
       let cdnResult: { downloaded: number; skipped: number; failed: number; errors: string[] } | undefined;
       let payloadResult: { written: number; skippedDrafts: number; mediaDir: string } | undefined;
+      let sanityWriteResult: { documentsWritten: number; assetsDownloaded: number; schemaTypes: number; outputPath: string } | undefined;
 
       if (manifest.source.platform === 'squarespace') {
-        collectionResult = writeSquarespaceCollections(manifest, targetDir, opts.dryRun, opts.hero as 'first-image' | 'none');
-        cdnResult = await downloadAllCdnImages(manifest, targetDir, opts.dryRun);
+        const sqspTarget = opts.target || 'astro';
+        if (sqspTarget === 'sanity') {
+          // Squarespace → Sanity (WXR → NDJSON)
+          const sanityResult = writeSanityOutput(manifest, targetDir, opts.dryRun, opts.idStrategy as 'prefix' | 'original');
+          cdnResult = await downloadSqspImagesForSanity(manifest, targetDir, opts.dryRun);
+          collectionResult = { written: sanityResult.documentsWritten, skippedDrafts: 0 };
+          sanityWriteResult = sanityResult;
+        } else {
+          collectionResult = writeSquarespaceCollections(manifest, targetDir, opts.dryRun, opts.hero as 'first-image' | 'none');
+          cdnResult = await downloadAllCdnImages(manifest, targetDir, opts.dryRun);
+        }
       } else if (manifest.source.platform === 'substack') {
         collectionResult = writeSubstackCollections(manifest, targetDir, opts.dryRun, opts.hero as 'first-image' | 'none');
         cdnResult = await downloadSubstackCdnImages(manifest, targetDir, opts.dryRun);
@@ -318,6 +330,13 @@ program.command('load')
         console.log(chalk.dim('  → ') + `Seed script: src/seed.ts`);
         console.log(chalk.dim('  → ') + `Config: src/payload.config.ts`);
         console.log(chalk.dim('  → ') + `Media dir: ${payloadResult.mediaDir}`);
+      } else if (sanityWriteResult) {
+        console.log(chalk.dim('  → ') + `${sanityWriteResult.documentsWritten} documents → Sanity NDJSON ✓`);
+        console.log(chalk.dim('  → ') + `${sanityWriteResult.schemaTypes} schema types generated ✓`);
+        console.log(chalk.dim('  → ') + `NDJSON: import/data.ndjson`);
+        console.log(chalk.dim('  → ') + `Schema: sanity-schema.ts`);
+        console.log(chalk.dim('  → ') + `ID map: id-map.json`);
+        console.log(chalk.dim('  → ') + `Assets: import/assets/`);
       } else {
         console.log(chalk.dim('  → ') + `${manifest.load.writtenFiles} files → ${manifest.load.writtenFiles} files          ✓ reconciled`);
       }
@@ -365,9 +384,9 @@ program.command('load')
           },
           {
             seedScript: payloadResult ? 'src/seed.ts' : undefined,
-            config: payloadResult ? 'src/payload.config.ts' : undefined,
+            config: payloadResult ? 'src/payload.config.ts' : sanityWriteResult ? 'sanity-schema.ts' : undefined,
             mediaDir: payloadResult?.mediaDir,
-            envFile: payloadResult ? '.env' : undefined,
+            envFile: payloadResult || sanityWriteResult ? '.env' : undefined,
           },
         );
         const reportPath = writeMigrationReport(report, targetDir);

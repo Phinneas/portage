@@ -94,7 +94,7 @@ export const TEMPLATES: CreativesTemplate[] = [
     name: 'Astro + Sanity',
     url: `${CREATIVES_BASE}/astro-sanity`,
     destination: 'sanity',
-    sourcePlatforms: ['contentful'],
+    sourcePlatforms: ['contentful', 'squarespace'],
     pricing: 'paid',
     description: 'Sanity Studio with generated schema definitions and an Astro frontend querying GROQ.',
   },

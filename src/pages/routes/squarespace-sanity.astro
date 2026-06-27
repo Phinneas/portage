@@ -1,0 +1,318 @@
+---
+import SpecLayout from '../../layouts/SpecLayout.astro';
+
+const meta = [
+  { k: 'Source', v: 'Squarespace (WXR XML export)', cy: true },
+  { k: 'Method', v: 'WXR XML parse + HTML → Portable Text', cy: true },
+  { k: 'Output', v: 'Sanity NDJSON · dataset import' },
+  { k: 'Target', v: 'Sanity Content Lake', cy: true },
+  { k: 'Spec rev', v: '2026.06 · r1 · beta' },
+];
+
+const toc = [
+  { id: 's01', num: '01', label: 'Overview' },
+  { id: 's02', num: '02', label: 'Extraction' },
+  { id: 's03', num: '03', label: 'Content model mapping' },
+  { id: 's04', num: '04', label: 'Content transforms' },
+  { id: 's05', num: '05', label: 'Assets' },
+  { id: 's06', num: '06', label: 'References & relationships' },
+  { id: 's07', num: '07', label: 'Out of scope' },
+  { id: 's08', num: '08', label: 'Edge cases' },
+  { id: 's09', num: '09', label: 'Output' },
+  { id: 's10', num: '10', label: 'CLI' },
+  { id: 's11', num: '11', label: 'Verification' },
+];
+---
+
+<SpecLayout
+  title="Route Spec — Squarespace → Sanity · Portage"
+  description="Portage route specification: migrating a Squarespace export into a Sanity dataset. WXR XML parsing, HTML to Portable Text conversion, CDN image rehosting, NDJSON generation, and CLI."
+  origin="Squarespace"
+  status="beta"
+  lede="A crossing for the Squarespace publisher moving to Sanity: posts and pages mapped to Sanity documents, HTML content converted to Portable Text, CDN images rehosted, and Squarespace-specific markup stripped. This route shares the WXR parser with WordPress paths, but Squarespace's cleaner content model (no shortcodes, no custom post types, simpler taxonomy) makes the transform more predictable."
+  meta={meta}
+  toc={toc}
+>
+  <section class="spec-sec" id="s01">
+    <h2><span class="num">01</span>Overview</h2>
+    <p>This route carries a <strong>Squarespace export</strong> into a <strong>Sanity dataset</strong>. It is a headless-CMS-to-headless-CMS migration — no static site, no Markdown files, no Astro content collections. The output is an NDJSON file (and a directory of assets) that feeds directly into <code>sanity dataset import</code>.</p>
+    <p>Squarespace exports use the <strong>WXR format</strong> (WordPress eXtended RSS), identical to WordPress exports. Portage's shared WXR parser (<code>wxr-parser.ts</code>) handles the XML extraction, while Squarespace-specific concerns (CDN image handling, sqs-block stripping, simpler taxonomy) are isolated in the transform layer.</p>
+    <div class="note keep">
+      <span class="lbl">Moves intact</span>
+      <ul>
+        <li><strong>Posts</strong> — blog posts with titles, slugs, content, excerpts, dates, tags, categories, and authors.</li>
+        <li><strong>Pages</strong> — static pages with the same field set.</li>
+        <li><strong>Tags &amp; categories</strong> — flat taxonomy from <code>&lt;category domain="post_tag"&gt;</code> and <code>&lt;category domain="category"&gt;</code>.</li>
+        <li><strong>Authors</strong> — <code>dc:creator</code> values mapped to Sanity author documents.</li>
+        <li><strong>Images</strong> — <code>images.squarespace-cdn.com</code> URLs extracted, downloaded, and referenced via <code>_sanityAsset</code>.</li>
+        <li><strong>Permalinks</strong> — original Squarespace URLs preserved in an <code>originalUrl</code> field.</li>
+      </ul>
+    </div>
+    <div class="note">
+      <span class="lbl">Why this route</span>
+      <p>Squarespace exports are the cleanest WXR source — no custom post types, no shortcodes, no plugin variance. The HTML content is wrapped in <code>sqs-block</code> divs but is otherwise well-structured. This makes it a good first WXR→Sanity path and a proof-of-concept for the shared parser architecture that will also serve WordPress→Sanity.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s02">
+    <h2><span class="num">02</span>Extraction</h2>
+    <p>Extraction reads the Squarespace WXR XML export file using the shared <code>wxr-parser.ts</code> library. The parser produces <code>WxrItem[]</code> with all fields, plus channel metadata, top-level categories, and authors.</p>
+    <h3>WXR structure</h3>
+    <div class="code">
+      <div class="code-bar"><span class="name">wxr structure</span><span class="meta">xml</span></div>
+      <pre is:raw">&lt;rss version="2.0"
+  xmlns:content="http://purl.org/rss/1.0/modules/content/"
+  xmlns:dc="http://purl.org/dc/elements/1.1/"
+  xmlns:wp="http://wordpress.org/export/1.2/"&gt;
+  &lt;channel&gt;
+    &lt;title&gt;My Squarespace Site&lt;/title&gt;
+    &lt;item&gt;
+      &lt;title&gt;Post Title&lt;/title&gt;
+      &lt;content:encoded&gt;...HTML...&lt;/content:encoded&gt;
+      &lt;wp:post_type&gt;post&lt;/wp:post_type&gt;
+      &lt;wp:post_name&gt;post-slug&lt;/wp:post_name&gt;
+      &lt;category domain="post_tag"&gt;&lt;![CDATA[tag-name]]&gt;&lt;/category&gt;
+    &lt;/item&gt;
+  &lt;/channel&gt;
+&lt;/rss&gt;</pre>
+    </div>
+    <h3>Squarespace vs WordPress WXR</h3>
+    <table class="spec-table">
+      <thead><tr><th>Aspect</th><th>Squarespace</th><th>WordPress</th></tr></thead>
+      <tbody>
+        <tr><td>Post types</td><td><code>post</code>, <code>page</code> only</td><td>Custom post types, attachments, revisions, nav_menu_item</td></tr>
+        <tr><td>Content</td><td>Clean HTML in <code>sqs-block</code> wrappers</td><td>Shortcodes, Gutenberg blocks, Classic Editor HTML</td></tr>
+        <tr><td>Taxonomy</td><td>Flat tags + categories</td><td>Custom taxonomies, hierarchical categories, term meta</td></tr>
+        <tr><td>Authors</td><td>Single <code>dc:creator</code> per item</td><td>Multiple authors via plugins, author meta</td></tr>
+        <tr><td>Comments</td><td>Not exported</td><td>Full comment threads</td></tr>
+        <tr><td>Postmeta</td><td>Minimal (no plugin data)</td><td>Extensive (SEO, ACF, WooCommerce, etc.)</td></tr>
+        <tr><td>Images</td><td>CDN URLs on <code>images.squarespace-cdn.com</code></td><td><code>wp:attachment_url</code>, media library references</td></tr>
+      </tbody>
+    </table>
+    <div class="note">
+      <span class="lbl">Shared parser</span>
+      <p>The WXR parser (<code>wxr-parser.ts</code>) is shared between this route and future WordPress paths. Squarespace-specific handling is isolated: CDN image extraction, <code>sqs-block</code> stripping, and the simpler taxonomy model. WordPress paths will add shortcode parsing, custom post type handling, and postmeta extraction.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s03">
+    <h2><span class="num">03</span>Content model mapping</h2>
+    <p>Squarespace's content model is simple: posts and pages with flat tags and categories. Sanity's document model is flexible: any schema type with any field structure. Portage maps the WXR fields to Sanity documents with the following schema types:</p>
+    <table class="spec-table">
+      <thead><tr><th>WXR field</th><th>Sanity field</th><th>Type</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><span class="gf">title</span></td><td>title</td><td>string</td><td></td></tr>
+        <tr><td><span class="gf">wp:post_name</span></td><td>slug</td><td>slug</td><td>Derived from post_name or slugified title</td></tr>
+        <tr><td><span class="gf">content:encoded</span></td><td>body</td><td>array of block/image/code</td><td>HTML → Portable Text conversion</td></tr>
+        <tr><td><span class="gf">excerpt:encoded</span></td><td>excerpt</td><td>text</td><td>HTML stripped to plain text</td></tr>
+        <tr><td><span class="gf">pubDate / wp:post_date</span></td><td>publishedAt</td><td>datetime</td><td>ISO 8601 format</td></tr>
+        <tr><td><span class="gf">wp:status</span></td><td>_status</td><td>string</td><td>"publish" → "published", "draft" → "draft"</td></tr>
+        <tr><td><span class="gf">category[@domain="post_tag"]</span></td><td>tags</td><td>array of reference | string</td><td>Resolved reference if tag document exists; plain string otherwise</td></tr>
+        <tr><td><span class="gf">category[@domain="category"]</span></td><td>categories</td><td>array of reference | string</td><td>Same mixed reference/string pattern</td></tr>
+        <tr><td><span class="gf">dc:creator</span></td><td>authors</td><td>array of reference</td><td>Single author from WXR → reference to author document</td></tr>
+        <tr><td><span class="gf">link</span></td><td>originalUrl</td><td>url</td><td>Preserved for redirect generation</td></tr>
+        <tr><td><span class="gf">First inline image</span></td><td>featureImage</td><td>image</td><td>_sanityAsset convention; extracted from body HTML</td></tr>
+      </tbody>
+    </table>
+    <div class="note">
+      <span class="lbl">Schema generation</span>
+      <p>Portage generates a <code>sanity-schema.ts</code> file with <code>defineType()</code> calls for <code>post</code>, <code>page</code>, <code>tag</code>, <code>category</code>, and <code>author</code>. Import this into your <code>sanity.config.ts</code>. The schema is a starting point — add custom validation, preview configurations, and field ordering after import.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s04">
+    <h2><span class="num">04</span>Content transforms</h2>
+    <h3>HTML → Portable Text</h3>
+    <p>Squarespace content is HTML wrapped in <code>&lt;div class="sqs-block"&gt;</code> containers. Portage strips the Squarespace-specific markup and converts the remaining HTML to Sanity Portable Text blocks:</p>
+    <table class="spec-table">
+      <thead><tr><th>HTML element</th><th>Portable Text block</th></tr></thead>
+      <tbody>
+        <tr><td><span class="gf">&lt;p&gt;</span></td><td><code>{ _type: "block", style: "normal" }</code></td></tr>
+        <tr><td><span class="gf">&lt;h1&gt;–&lt;h5&gt;</span></td><td><code>{ _type: "block", style: "h1"–"h5" }</code></td></tr>
+        <tr><td><span class="gf">&lt;blockquote&gt;</span></td><td><code>{ _type: "block", style: "blockquote" }</code></td></tr>
+        <tr><td><span class="gf">&lt;ul&gt;&lt;li&gt;</span></td><td><code>{ _type: "block", listItem: "bullet" }</code></td></tr>
+        <tr><td><span class="gf">&lt;ol&gt;&lt;li&gt;</span></td><td><code>{ _type: "block", listItem: "number" }</code></td></tr>
+        <tr><td><span class="gf">&lt;pre&gt;</span></td><td><code>{ _type: "code" }</code></td></tr>
+        <tr><td><span class="gf">&lt;img src="…sqsp-cdn…"&gt;</span></td><td><code>{ _type: "image", _sanityAsset: "image@file:///assets/…" }</code></td></tr>
+      </tbody>
+    </table>
+    <h3>Squarespace markup stripping</h3>
+    <p>Before conversion, the following Squarespace-specific attributes and wrappers are removed:</p>
+    <ul>
+      <li><code>&lt;div class="sqs-block …"&gt;</code> wrappers — stripped, inner content preserved</li>
+      <li><code>class="sqs-*"</code> attributes — removed from all elements</li>
+      <li><code>data-*</code> attributes — removed (Squarespace layout metadata)</li>
+      <li><code>style="…"</code> attributes — removed (inline styles not meaningful in Portable Text)</li>
+    </ul>
+    <div class="note">
+      <span class="lbl">Cleaner than WordPress</span>
+      <p>Squarespace HTML is structurally simpler than WordPress HTML. No shortcodes, no Gutenberg block attributes, no ACF field references. The <code>sqs-block</code> wrappers are the only Squarespace-specific markup, and they are trivially stripped. This makes the Portable Text conversion more reliable than it would be for WordPress source content.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s05">
+    <h2><span class="num">05</span>Assets</h2>
+    <h3>Squarespace CDN images</h3>
+    <p>Squarespace hosts all images on <code>images.squarespace-cdn.com</code>. These are public, static URLs that require no authentication. After site deletion, images persist for 8–38 days on the CDN.</p>
+    <ul>
+      <li><strong>URL format</strong> — <code>https://images.squarespace-cdn.com/content/v1/{site_id}/{image_id}/{filename}?format={variant}</code></li>
+      <li><strong>Size variants</strong> — 100w, 300w, 500w, 750w, 1000w, 1500w, 2500w</li>
+      <li><strong>Download strategy</strong> — strip <code>?format=</code>, re-request with <code>?format=2500w</code> for maximum quality</li>
+      <li><strong>Dedup</strong> — by bare URL (without format query param)</li>
+    </ul>
+    <h3>Sanity asset convention</h3>
+    <p>In the NDJSON, image fields use the <code>_sanityAsset</code> convention so <code>sanity dataset import</code> resolves them automatically:</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">image field · ndjson</span><span class="meta">json</span></div>
+      <pre is:raw>{
+  "_id": "post_1",
+  "_type": "post",
+  "featureImage": {
+    "_type": "image",
+    "_sanityAsset": "image@file:///assets/hero.jpg",
+    "alt": "Hero image"
+  }
+}</pre>
+    </div>
+    <div class="note">
+      <span class="lbl">No original format</span>
+      <p>Squarespace's CDN has no "original" format. The 2500w variant is the largest available. Sanity handles responsive sizing via its own image pipeline, so rehosting the 2500w version is sufficient.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s06">
+    <h2><span class="num">06</span>References &amp; relationships</h2>
+    <h3>Tag and category references</h3>
+    <p>Tags and categories are created as separate Sanity documents first, then referenced from posts/pages using <code>{ _type: "reference", _ref: "tag_id", _weak: true }</code>. The <code>_weak: true</code> flag allows the import tool to handle out-of-order references.</p>
+    <p>When a tag has no matching document (e.g., a tag that appears only in an item's <code>&lt;category&gt;</code> but not in the top-level <code>&lt;wp:tag&gt;</code> elements), Portage creates a tag document from the category value and maps it as a reference. If a reference cannot be resolved, the tag/category is stored as a plain string instead of a reference.</p>
+    <h3>Author references</h3>
+    <p><code>dc:creator</code> values are mapped to Sanity author documents. When a creator appears in items but not in <code>&lt;wp:author&gt;</code>, Portage synthesizes an author document from the creator name.</p>
+    <h3>ID strategy</h3>
+    <p>By default, Portage uses <strong>prefix</strong> strategy: <code>{type}_{id}</code> (e.g., <code>post_1</code>, <code>tag_javascript</code>). This avoids collisions across document types. The <code>--id-strategy original</code> flag uses raw IDs instead.</p>
+    <p>An <code>id-map.json</code> file is written alongside the NDJSON so references can be resolved during generation.</p>
+    <h3>Document ordering</h3>
+    <p>The NDJSON is written in dependency order:</p>
+    <ol>
+      <li><strong>Tags</strong> — reference targets for posts</li>
+      <li><strong>Categories</strong> — reference targets for posts</li>
+      <li><strong>Authors</strong> — reference targets for posts</li>
+      <li><strong>Posts and pages</strong> — reference authors, tags, categories, and media</li>
+    </ol>
+    <p>Sanity's <code>dataset import</code> automatically sets all references to weak during import and flips them to strong afterward, so the ordering is a best practice, not a requirement.</p>
+  </section>
+
+  <section class="spec-sec" id="s07">
+    <h2><span class="num">07</span>Out of scope</h2>
+    <ul>
+      <li><strong>Squarespace layout</strong> — page layouts, section designs, and style overrides are not migrated. Sanity handles layout in its frontend.</li>
+      <li><strong>Form blocks</strong> — Squarespace form submissions and form configurations are not migrated.</li>
+      <li><strong>Commerce</strong> — product pages, inventory, and checkout configuration are not migrated.</li>
+      <li><strong>Scheduling/Events</strong> — calendar and event blocks are not migrated.</li>
+      <li><strong>Gallery blocks</strong> — gallery layouts are flattened into image sequences. Gallery-specific presentation (grid, slideshow, masonry) is lost.</li>
+      <li><strong>Code injection</strong> — Squarespace header/footer code injection is not migrated.</li>
+      <li><strong>Custom CSS</strong> — site-wide custom styles are not migrated.</li>
+      <li><strong>URL redirects</strong> — Squarespace URL mappings are not auto-converted to Sanity redirect documents. The <code>originalUrl</code> field preserves the source URL for manual redirect creation.</li>
+    </ul>
+  </section>
+
+  <section class="spec-sec" id="s08">
+    <h2><span class="num">08</span>Edge cases</h2>
+    <ul>
+      <li><strong>Expired CDN images</strong> — Squarespace CDN images may expire 8–38 days after site deletion. Portage logs failures and continues. Re-run extract before images expire.</li>
+      <li><strong>Empty content</strong> — posts with empty <code>content:encoded</code> produce an empty <code>body</code> array. Not an error, but review in Sanity Studio.</li>
+      <li><strong>Missing post_name</strong> — some WXR items have empty <code>wp:post_name</code>. Portage derives a slug from the title via <code>wxrSlugify()</code>.</li>
+      <li><strong>Attachment items</strong> — WXR may include <code>wp:post_type = "attachment"</code> items. These are filtered out by default. Use <code>--include-attachments</code> to include them.</li>
+      <li><strong>Multiple categories with same name</strong> — if a tag and category share the same name, they get separate Sanity documents with different ID prefixes (<code>tag_*</code> vs <code>category_*</code>).</li>
+      <li><strong>Inline images not on sqsp CDN</strong> — images from external domains (e.g., embedded Instagram) are not downloaded and are preserved as URL references in the Portable Text.</li>
+      <li><strong>HTML tables</strong> — tables are not converted to Portable Text. They fall through as HTML content for manual review. Consider using a custom block type.</li>
+    </ul>
+  </section>
+
+  <section class="spec-sec" id="s09">
+    <h2><span class="num">09</span>Output</h2>
+    <p>A project directory containing the NDJSON import file, downloaded assets, the generated Sanity schema, the ID mapping table, and the manifest. Run <code>sanity dataset import import/data.ndjson</code> to load the data.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">project tree</span><span class="meta">output</span></div>
+      <pre is:raw>sanity-project/
+├── import/
+│   ├── data.ndjson           <span class="c">← One JSON document per line</span>
+│   └── assets/               <span class="c">← Downloaded Squarespace CDN images</span>
+│       ├── hero-1705312000000.jpg
+│       ├── photo1-1705312000001.jpg
+│       └── <span class="c">… more</span>
+├── sanity-schema.ts          <span class="c">← Generated Sanity schema definitions</span>
+├── id-map.json               <span class="c">← WXR ID → Sanity ID mapping</span>
+├── .env                      <span class="c">← SANITY_PROJECT_ID, SANITY_DATASET</span>
+├── portage.manifest.json     <span class="c">← extract / transform / load ledger</span>
+└── migration-report.json     <span class="c">← migration summary + handoff link</span></pre>
+    </div>
+    <h3>Sample NDJSON line</h3>
+    <div class="code">
+      <div class="code-bar"><span class="name">data.ndjson</span><span class="meta">json</span></div>
+      <pre is:raw">{"_id":"post_1","_type":"post","title":"My First Blog Post","slug":{"_type":"slug","current":"my-first-blog-post"},"body":[{"_type":"block","style":"normal","children":[{"_type":"span","marks":[],"text":"Welcome to my first blog post."}],"markDefs":[]}],"excerpt":"A brief summary","publishedAt":"2024-01-15","tags":[{"_type":"reference","_ref":"tag_javascript","_weak":true},{"_type":"reference","_ref":"tag_webdev","_weak":true}],"categories":[{"_type":"reference","_ref":"category_Technology","_weak":true}],"authors":[{"_type":"reference","_ref":"author_alice","_weak":true}],"originalUrl":"https://mysite.squarespace.com/blog/my-first-blog-post","_status":"published"}</pre>
+    </div>
+    <div class="note">
+      <span class="lbl">Paired template</span>
+      <p>The Astro + Sanity template from Salish Sea Creatives includes a pre-configured Sanity Studio with schema definitions matching the generated <code>sanity-schema.ts</code>, and an Astro frontend that queries Sanity's GROQ API. Spin it up, run the import, and verify content in Sanity Studio. Both Squarespace and Sanity free tiers are sufficient for testing.</p>
+    </div>
+  </section>
+
+  <section class="spec-sec" id="s10">
+    <h2><span class="num">10</span>CLI</h2>
+    <p>Three stages. The extract phase parses the WXR XML. The transform phase maps fields and converts HTML to Portable Text. The load phase writes the NDJSON file, downloads assets, and produces the import package.</p>
+    <div class="code">
+      <div class="code-bar"><span class="name">portage · squarespace → sanity</span><span class="meta">bash</span></div>
+      <pre is:raw><span class="pr">$</span> npx portage extract <span class="fl">--from</span> squarespace <span class="fl">--export</span> ./squarespace-export.xml <span class="fl">--to</span> ./sanity-project
+<span class="out">  → 3 posts · 1 page · 5 tags · 2 authors · 3 images referenced</span>
+<span class="pr">$</span> npx portage transform
+<span class="out">  → 11 fields mapped · 3 content rewrites (HTML → Portable Text)</span>
+<span class="pr">$</span> npx portage load <span class="fl">--target</span> sanity <span class="fl">--id-strategy</span> prefix
+<span class="out">  → 9 documents → Sanity NDJSON          ✓</span>
+<span class="out">  → 5 schema types generated              ✓</span>
+<span class="out">  → NDJSON: import/data.ndjson</span>
+<span class="out">  → Schema: sanity-schema.ts</span>
+<span class="out">  → Assets: import/assets/</span>
+<span class="out">  ⚡ Next step: The Astro + Sanity template is available from Salish Sea Creatives. Pre-wired for your new CMS.</span></pre>
+    </div>
+    <h3>CLI flags</h3>
+    <table class="spec-table">
+      <thead><tr><th>Flag</th><th>Values</th><th>Default</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><span class="gf">--target</span></td><td><code>sanity</code></td><td>astro</td><td>Destination platform. Required for Sanity output.</td></tr>
+        <tr><td><span class="gf">--id-strategy</span></td><td><code>prefix</code> / <code>original</code></td><td>prefix</td><td>Sanity document ID format.</td></tr>
+        <tr><td><span class="gf">--export</span></td><td>path</td><td>required</td><td>Path to the Squarespace WXR XML export file.</td></tr>
+        <tr><td><span class="gf">--dry-run</span></td><td>flag</td><td>off</td><td>Plan only; write nothing.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="spec-sec" id="s11">
+    <h2><span class="num">11</span>Verification</h2>
+    <p>After running the migration, verify content in Sanity Studio.</p>
+    <h3>Content verification</h3>
+    <div class="code">
+      <div class="code-bar"><span class="name">sanity · verify</span><span class="meta">bash</span></div>
+      <pre is:raw"><span class="pr">$</span> cd sanity-project
+<span class="pr">$</span> npx sanity dataset import import/data.ndjson production
+<span class="out">  ✔ Imported 9 documents</span>
+<span class="pr">$</span> npx sanity documents query "*[_type == 'post']" --project <span class="s">"your-project-id"</span>
+<span class="out">  → 3 posts found</span>
+<span class="pr">$</span> npx sanity documents query "*[_type == 'post' && defined(featureImage)]" --project <span class="s">"your-project-id"</span>
+<span class="out">  → Posts with feature image: 2</span></pre>
+    </div>
+    <h3>Verification checklist</h3>
+    <ul>
+      <li>All posts and pages appear in Sanity Studio with correct titles and slugs</li>
+      <li>Portable Text content renders correctly in the Sanity editor</li>
+      <li>Tags and categories are linked as references (not plain strings)</li>
+      <li>Author references resolve correctly</li>
+      <li>Feature images display in Sanity Studio</li>
+      <li>Draft posts have <code>_status: "draft"</code></li>
+      <li>No data loss — compare post count in manifest vs Sanity query result</li>
+    </ul>
+    <div class="note">
+      <span class="lbl">Shared parser proof</span>
+      <p>This route validates the shared WXR parser architecture. The same <code>wxr-parser.ts</code> that serves Squarespace→Sanity will serve WordPress→Sanity and WordPress→Astro. If the parser works correctly here, it will work for WordPress with the addition of platform-specific transforms (shortcode parsing, custom post type handling, postmeta extraction).</p>
+    </div>
+  </section>
+</SpecLayout>
