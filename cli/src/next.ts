@@ -12,6 +12,7 @@ import { resolve, extname, relative, basename } from 'node:path';
 import fg from 'fast-glob';
 import { checksumFile, type Manifest, type ContentFile, type PluginMapping } from './manifest.js';
 import { splitFrontmatter, ensureArray, coerceDate, coerceBoolean } from './frontmatter.js';
+import { checksumString } from './asset_handler.js';
 
 // ── Public API ─────────────────────────────────────────────────────────
 
@@ -566,7 +567,7 @@ export function rewriteNextHead(content: string): string {
 
 // ── Frontmatter mapping (used by astro-writer) ──────────────────────────
 
-export function mapNextFrontmatter(rawFrontmatter: Record<string, unknown>): Record<string, unknown> {
+export function mapNextFrontmatter(rawFrontmatter: Record<string, unknown>, relativePath?: string): Record<string, unknown> {
   const astro: Record<string, unknown> = {};
 
   if (rawFrontmatter.title) astro.title = String(rawFrontmatter.title);
@@ -596,6 +597,45 @@ export function mapNextFrontmatter(rawFrontmatter: Record<string, unknown>): Rec
 
   if (rawFrontmatter.heroImage) {
     astro.heroImage = rewriteImagePath(String(rawFrontmatter.heroImage));
+  }
+
+  // Updated date
+  if (rawFrontmatter.updated || rawFrontmatter.lastModifiedAt || rawFrontmatter.updatedDate) {
+    const d = coerceDate(String(rawFrontmatter.updated || rawFrontmatter.lastModifiedAt || rawFrontmatter.updatedDate));
+    if (d) astro.updatedDate = d;
+  }
+
+  // Hero image alt text
+  if (rawFrontmatter.heroImageAlt || rawFrontmatter.imageAlt) {
+    astro.heroImageAlt = String(rawFrontmatter.heroImageAlt || rawFrontmatter.imageAlt);
+  }
+
+  // Featured flag
+  if (rawFrontmatter.featured !== undefined) {
+    astro.featured = coerceBoolean(rawFrontmatter.featured);
+  }
+
+  // Default access to public (Next.js has no visibility concept)
+  astro.access = 'public';
+
+  // Canonical URL
+  if (rawFrontmatter.canonical_url || rawFrontmatter.canonicalUrl) {
+    astro.canonicalURL = String(rawFrontmatter.canonical_url || rawFrontmatter.canonicalUrl);
+  }
+
+  // SEO metadata
+  if (rawFrontmatter.seo && typeof rawFrontmatter.seo === 'object') {
+    astro.seo = rawFrontmatter.seo;
+  } else if (rawFrontmatter.seoTitle || rawFrontmatter.seoDescription) {
+    const seo: Record<string, string> = {};
+    if (rawFrontmatter.seoTitle) seo.title = String(rawFrontmatter.seoTitle);
+    if (rawFrontmatter.seoDescription) seo.description = String(rawFrontmatter.seoDescription);
+    astro.seo = seo;
+  }
+
+  // Original ID from file path hash
+  if (relativePath) {
+    astro.originalId = checksumString(relativePath);
   }
 
   return astro;

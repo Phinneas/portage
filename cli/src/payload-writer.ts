@@ -59,6 +59,7 @@ export function mapGhostPostToPayload(
 
   // Preserve Ghost GID for reference
   doc.ghostUuid = post.uuid;
+  doc.originalId = post.uuid;
 
   doc.title = post.title;
   doc.slug = post.slug;

@@ -18,6 +18,7 @@ import { mapSubstackFrontmatter, convertHtmlToMarkdown as convertSubstackHtml, r
 import { mapNextFrontmatter, rewriteNextLink, rewriteNextImage, rewriteNextHead, deriveSlug as deriveNextSlug } from './next.js';
 import { mapGhostFrontmatter, readGhostExport } from './ghost.js';
 import { convertHtmlToMarkdown as convertGhostHtml } from './block_parser.js';
+import { checksumString } from './asset_handler.js';
 
 // ── MDX rewriting ─────────────────────────────────────────────────────
 
@@ -175,7 +176,7 @@ export function writeCollections(manifest: Manifest, targetDir: string, dryRun: 
       if (isJekyll && fm.published === false) fm.draft = true;
       if (fm.draft === true || fm.draft === 'true') skippedDrafts++;
 
-      const astroFm = isJekyll ? mapJekyllFrontmatter(fm) : isNext ? mapNextFrontmatter(fm) : mapFrontmatter(fm);
+      const astroFm = isJekyll ? mapJekyllFrontmatter(fm) : isNext ? mapNextFrontmatter(fm, file.relativePath) : mapFrontmatter(fm, file.relativePath);
       if (astroFm.heroImage) astroFm.heroImage = rewriteImagePath(String(astroFm.heroImage));
 
       // Jekyll: inject date from filename if not in frontmatter
@@ -226,7 +227,7 @@ export function writeCollections(manifest: Manifest, targetDir: string, dryRun: 
   return { written, skippedDrafts };
 }
 
-function mapFrontmatter(fm: Record<string, unknown>): Record<string, unknown> {
+function mapFrontmatter(fm: Record<string, unknown>, relativePath?: string): Record<string, unknown> {
   const astro: Record<string, unknown> = {};
 
   for (const [gatsbyKey, astroKey] of Object.entries(FIELD_KEY_MAP)) {
@@ -239,6 +240,7 @@ function mapFrontmatter(fm: Record<string, unknown>): Record<string, unknown> {
       if (value === undefined) continue;
     }
     if (astroKey === 'draft') value = coerceBoolean(value);
+    if (astroKey === 'featured') value = coerceBoolean(value);
     if (astroKey === 'authors' && gatsbyKey === 'author') value = ensureArray(value);
     else if (astroKey === 'categories' && gatsbyKey === 'category') value = ensureArray(value);
     else if (['authors', 'tags', 'categories'].includes(astroKey)) value = ensureArray(value);
@@ -246,7 +248,16 @@ function mapFrontmatter(fm: Record<string, unknown>): Record<string, unknown> {
     astro[astroKey] = value;
   }
 
+  // Default access to public (Gatsby has no visibility concept)
+  astro.access = 'public';
+
+  // SEO from nested object
   if (fm.seo && typeof fm.seo === 'object') astro.seo = fm.seo;
+
+  // Original ID from file path (deterministic hash)
+  if (relativePath) {
+    astro.originalId = checksumString(relativePath);
+  }
 
   const knownKeys = new Set(Object.keys(FIELD_KEY_MAP));
   for (const [k, v] of Object.entries(fm)) {
@@ -294,6 +305,18 @@ function mapJekyllFrontmatter(fm: Record<string, unknown>): Record<string, unkno
   // Carry seo fields
   if (fm.seo && typeof fm.seo === 'object') astro.seo = fm.seo;
 
+  // Default access to public (Jekyll has no visibility concept)
+  astro.access = 'public';
+
+  // Featured flag
+  if (fm.featured !== undefined) astro.featured = coerceBoolean(fm.featured);
+
+  // Original ID from canonical_url or path hash
+  if (fm.canonical_url) astro.originalId = String(fm.canonical_url);
+
+  // Original ID from file path (deterministic hash) if no canonical
+  if (!astro.originalId && fm.permalink) astro.originalId = checksumString(String(fm.permalink));
+
   // Unknown keys → jekyll: namespace
   const knownKeys = new Set(Object.keys(JEKYLL_FIELD_KEY_MAP));
   for (const [k, v] of Object.entries(fm)) {
@@ -321,8 +344,8 @@ export function writeSquarespaceCollections(manifest: Manifest, targetDir: strin
     mkdirSync(assetsDir, { recursive: true });
   }
 
-  const items = readWxrItems(targetDir);
-  for (const item of items) {
+  const { items: wxrItemList } = readWxrItems(targetDir);
+  for (const item of wxrItemList) {
     if (item.status === 'draft') {
       skippedDrafts++;
     }
@@ -556,7 +579,7 @@ function writeAstroConfig(targetDir: string, manifest: Manifest): void {
   const hasMdx = manifest.extract.contentFiles.some((f) => f.format === 'mdx');
   const hasSitemap = manifest.extract.plugins.some((p) => p.gatsbyPlugin === 'gatsby-plugin-sitemap' || p.gatsbyPlugin === 'jekyll-sitemap');
 
-  // Read Ghost settings if available for site metadata
+  // Read site settings from platform sidecar
   let siteUrl = 'https://example.com';
   let siteTitle = '';
   let siteDescription = '';
@@ -566,6 +589,37 @@ function writeAstroConfig(targetDir: string, manifest: Manifest): void {
       if (ghostExport.settings.url) siteUrl = ghostExport.settings.url.replace(/\/$/, '');
       siteTitle = ghostExport.settings.title;
       siteDescription = ghostExport.settings.description;
+    }
+  } else if (manifest.source.platform === 'squarespace') {
+    const wxrData = readWxrItems(targetDir);
+    if (wxrData?.channelInfo) {
+      const ch = wxrData.channelInfo;
+      if (ch.link) siteUrl = ch.link.replace(/\/$/, '');
+      siteTitle = ch.title || '';
+      siteDescription = ch.description || '';
+    }
+  } else if (manifest.source.platform === 'jekyll') {
+    const jekyllConfigPath = resolve(manifest.source.path, '_config.yml');
+    if (existsSync(jekyllConfigPath)) {
+      try {
+        const yaml = readFileSync(jekyllConfigPath, 'utf-8');
+        const titleMatch = yaml.match(/^title:\s*["']?(.+?)["']?\s*$/m);
+        const descMatch = yaml.match(/^description:\s*["']?(.+?)["']?\s*$/m);
+        const urlMatch = yaml.match(/^url:\s*["']?(.+?)["']?\s*$/m);
+        if (titleMatch) siteTitle = titleMatch[1];
+        if (descMatch) siteDescription = descMatch[1];
+        if (urlMatch) siteUrl = urlMatch[1].replace(/\/$/, '');
+      } catch { /* ignore */ }
+    }
+  } else if (manifest.source.platform === 'gatsby') {
+    // Gatsby siteMetadata from gatsby-config.js is already in the source dir
+    // Try to read it from manifest plugins (siteMetadata mapping)
+    const siteMeta = manifest.extract.plugins.find((p) => p.gatsbyPlugin === 'gatsby-plugin-site-metadata');
+    if (siteMeta?.options) {
+      const opts = siteMeta.options as Record<string, unknown>;
+      if (opts.title) siteTitle = String(opts.title);
+      if (opts.description) siteDescription = String(opts.description);
+      if (opts.siteUrl) siteUrl = String(opts.siteUrl).replace(/\/$/, '');
     }
   }
 

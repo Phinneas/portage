@@ -463,6 +463,11 @@ describe('mapGhostFrontmatter', () => {
     expect(fm.ghostUuid).toBe(post.uuid);
   });
 
+  it('sets originalId to ghostUuid', () => {
+    const fm = mapGhostFrontmatter(post, [], []);
+    expect(fm.originalId).toBe(post.uuid);
+  });
+
   it('maps title', () => {
     const fm = mapGhostFrontmatter(post, [], []);
     expect(fm.title).toBe('Leaving the Walled Garden');

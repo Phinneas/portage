@@ -463,7 +463,7 @@ export function writeSanityOutput(
   dryRun: boolean,
   idStrategy: IdStrategy = 'prefix',
 ): SanityWriteResult {
-  const wxrItems = readWxrItems(targetDir);
+  const { items: wxrItems, channelInfo: _channelInfo } = readWxrItems(targetDir);
   if (wxrItems.length === 0) {
     throw new Error('No portage-wxr-items.json found. Run `portage extract` first.');
   }

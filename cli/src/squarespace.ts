@@ -35,6 +35,7 @@ export interface ExtractResult {
   manifest: Manifest;
   dryRun: boolean;
   wxrItems: WxrItem[];
+  channelInfo?: import('./wxr-parser.js').WxrChannelInfo;
 }
 
 export async function extractSquarespace(opts: ExtractOptions): Promise<ExtractResult> {
@@ -93,21 +94,23 @@ export async function extractSquarespace(opts: ExtractOptions): Promise<ExtractR
   manifest.extract.counts.tags = meta.tags;
   manifest.extract.counts.authors = meta.authors;
 
-  return { manifest, dryRun: opts.dryRun ?? false, wxrItems: wxrResult.items };
+  return { manifest, dryRun: opts.dryRun ?? false, wxrItems: wxrResult.items, channelInfo: wxrResult.channelInfo };
 }
 
 // ── WXR items sidecar (for load phase) ────────────────────────────────
 
-export function writeWxrItems(items: WxrItem[], targetDir: string): void {
+export function writeWxrItems(items: WxrItem[], targetDir: string, channelInfo?: import('./wxr-parser.js').WxrChannelInfo): void {
   const path = resolve(targetDir, 'portage-wxr-items.json');
   mkdirSync(resolve(targetDir), { recursive: true });
-  writeFileSync(path, JSON.stringify(items, null, 2) + '\n', 'utf-8');
+  writeFileSync(path, JSON.stringify({ items, channelInfo: channelInfo || null }, null, 2) + '\n', 'utf-8');
 }
 
-export function readWxrItems(targetDir: string): WxrItem[] {
+export function readWxrItems(targetDir: string): { items: WxrItem[]; channelInfo?: import('./wxr-parser.js').WxrChannelInfo } {
   const path = resolve(targetDir, 'portage-wxr-items.json');
-  if (!existsSync(path)) return [];
-  return JSON.parse(readFileSync(path, 'utf-8'));
+  if (!existsSync(path)) return { items: [] };
+  const data = JSON.parse(readFileSync(path, 'utf-8'));
+  if (Array.isArray(data)) return { items: data }; // legacy format
+  return { items: data.items || [], channelInfo: data.channelInfo };
 }
 
 // ── CDN image download ────────────────────────────────────────────────
@@ -329,12 +332,30 @@ export function mapSquarespaceFrontmatter(item: WxrItem, heroStrategy: 'first-im
   const dateVal = coerceDate(item.pubDate || item.postDate);
   if (dateVal) astro.pubDate = dateVal;
 
+  // Updated date from modified_gmt if available
+  if (item.postDate && item.pubDate && item.postDate !== item.pubDate) {
+    const updDate = coerceDate(item.postDate);
+    if (updDate) astro.updatedDate = updDate;
+  }
+
   if (item.tags.length > 0) astro.tags = item.tags;
   if (item.categories.length > 0) astro.categories = item.categories;
   if (item.creator) astro.authors = [item.creator];
 
   if (item.status === 'draft') astro.draft = true;
   else astro.draft = false;
+
+  // Featured (Squarespace doesn't have a native featured flag, default false)
+  astro.featured = false;
+
+  // Access (Squarespace doesn't have visibility, default public)
+  astro.access = 'public';
+
+  // Canonical URL from WXR link
+  if (item.link) astro.canonicalURL = item.link;
+
+  // Original ID from WXR postId
+  astro.originalId = String(item.postId || '');
 
   if (heroStrategy === 'first-image') {
     const heroUrl = deriveHero(item.content);

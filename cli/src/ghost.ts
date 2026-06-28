@@ -491,6 +491,7 @@ export function mapGhostFrontmatter(
 
   // Preserve Ghost GID for reference
   astro.ghostUuid = post.uuid;
+  astro.originalId = post.uuid;
 
   astro.title = post.title;
 

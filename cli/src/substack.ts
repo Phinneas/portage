@@ -34,6 +34,7 @@ export interface SubstackPost {
   podcastDuration: number;
   podcastUrl: string;
   html: string;
+  author?: string;
 }
 
 export interface ExtractOptions {
@@ -244,6 +245,7 @@ export async function extractSubstack(opts: ExtractOptions): Promise<ExtractResu
       podcastDuration: row.podcast_duration ? parseInt(row.podcast_duration, 10) : 0,
       podcastUrl: row.podcast_url || '',
       html,
+      author: row.author || '',
     };
 
     // Filter by options
@@ -271,6 +273,7 @@ export async function extractSubstack(opts: ExtractOptions): Promise<ExtractResu
         podcastDuration: 0,
         podcastUrl: '',
         html,
+        author: '',
       });
     }
   }
@@ -565,11 +568,21 @@ export function mapSubstackFrontmatter(
 
   astro.draft = !post.isPublished;
 
+  // Access levels from audience field
   if (post.audience === 'only_paid') astro.access = 'paid';
   else if (post.audience === 'only_free') astro.access = 'members';
   else astro.access = 'public';
 
   if (post.url) astro.canonicalURL = post.url;
+
+  // Authors from post (Substack has a single author per post)
+  if (post.author) astro.authors = [post.author];
+
+  // Featured (Substack doesn't have a native featured flag, default false)
+  astro.featured = false;
+
+  // Original ID from post_id
+  astro.originalId = String(post.postId || '');
 
   // Podcast fields
   if (post.type === 'podcast') {

@@ -276,6 +276,7 @@ describe('mapSubstackFrontmatter', () => {
     podcastDuration: 0,
     podcastUrl: '',
     html: '<p>Content</p>',
+    author: '',
   };
 
   it('maps basic fields', () => {
@@ -342,6 +343,22 @@ describe('mapSubstackFrontmatter', () => {
     const fm = mapSubstackFrontmatter(basePost, 'first-image');
     expect(fm.substackId).toBe('12345.my-post');
     expect(fm.substackType).toBe('newsletter');
+  });
+
+  it('sets featured to false', () => {
+    const fm = mapSubstackFrontmatter(basePost, 'first-image');
+    expect(fm.featured).toBe(false);
+  });
+
+  it('sets originalId from postId', () => {
+    const fm = mapSubstackFrontmatter(basePost, 'first-image');
+    expect(fm.originalId).toBe('12345.my-post');
+  });
+
+  it('maps author to authors array', () => {
+    const withAuthor = { ...basePost, author: 'Jane Doe' };
+    const fm = mapSubstackFrontmatter(withAuthor, 'first-image');
+    expect(fm.authors).toEqual(['Jane Doe']);
   });
 });
 

@@ -88,7 +88,7 @@ program.command('extract')
         // Write WXR items sidecar for the load phase
         if (!dryRun) {
           if (!existsSync(resolve(opts.to))) mkdirSync(resolve(opts.to), { recursive: true });
-          writeWxrItemsSidecar(result.wxrItems, opts.to);
+          writeWxrItemsSidecar(result.wxrItems, opts.to, result.channelInfo);
         }
       } else if (opts.from === 'substack') {
         const result = await extractSubstack({

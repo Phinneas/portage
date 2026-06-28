@@ -89,7 +89,50 @@ describe('mapNextFrontmatter', () => {
 
   it('handles empty frontmatter', () => {
     const fm = mapNextFrontmatter({});
-    expect(fm).toEqual({});
+    expect(fm.access).toBe('public');
+    expect(fm.title).toBeUndefined();
+    expect(fm.pubDate).toBeUndefined();
+  });
+
+  it('maps updated date', () => {
+    const fm = mapNextFrontmatter({ updated: '2025-03-15' });
+    expect(fm.updatedDate).toBeTruthy();
+  });
+
+  it('maps heroImageAlt', () => {
+    const fm = mapNextFrontmatter({ heroImageAlt: 'Alt text' });
+    expect(fm.heroImageAlt).toBe('Alt text');
+  });
+
+  it('maps featured flag', () => {
+    const fm = mapNextFrontmatter({ featured: true });
+    expect(fm.featured).toBe(true);
+  });
+
+  it('maps canonical URL', () => {
+    const fm = mapNextFrontmatter({ canonical_url: '/old-path' });
+    expect(fm.canonicalURL).toBe('/old-path');
+  });
+
+  it('maps SEO from nested object', () => {
+    const fm = mapNextFrontmatter({ seo: { title: 'SEO Title', description: 'SEO Desc' } });
+    expect(fm.seo).toEqual({ title: 'SEO Title', description: 'SEO Desc' });
+  });
+
+  it('maps SEO from flat fields', () => {
+    const fm = mapNextFrontmatter({ seoTitle: 'Flat SEO', seoDescription: 'Flat Desc' });
+    expect(fm.seo).toEqual({ title: 'Flat SEO', description: 'Flat Desc' });
+  });
+
+  it('sets originalId from relativePath', () => {
+    const fm = mapNextFrontmatter({ title: 'Test' }, 'pages/about.mdx');
+    expect(fm.originalId).toBeTruthy();
+    expect(typeof fm.originalId).toBe('string');
+  });
+
+  it('sets access to public by default', () => {
+    const fm = mapNextFrontmatter({ title: 'Test' });
+    expect(fm.access).toBe('public');
   });
 });
 

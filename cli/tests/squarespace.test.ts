@@ -384,6 +384,26 @@ describe('mapSquarespaceFrontmatter', () => {
     const fm = mapSquarespaceFrontmatter(noExcerpt, 'none');
     expect(fm.description).toBeUndefined();
   });
+
+  it('sets access to public', () => {
+    const fm = mapSquarespaceFrontmatter(baseItem, 'none');
+    expect(fm.access).toBe('public');
+  });
+
+  it('sets featured to false', () => {
+    const fm = mapSquarespaceFrontmatter(baseItem, 'none');
+    expect(fm.featured).toBe(false);
+  });
+
+  it('sets originalId from postId', () => {
+    const fm = mapSquarespaceFrontmatter(baseItem, 'none');
+    expect(fm.originalId).toBe(String(baseItem.postId));
+  });
+
+  it('sets canonicalURL from link', () => {
+    const fm = mapSquarespaceFrontmatter(baseItem, 'none');
+    expect(fm.canonicalURL).toBe(baseItem.link);
+  });
 });
 
 // ── Feature Mapping ──────────────────────────────────────────────────────
@@ -472,8 +492,8 @@ describe('WXR items sidecar', () => {
     ];
     writeWxrItems(items, tmpDir);
     const read = readWxrItems(tmpDir);
-    expect(read.length).toBe(1);
-    expect(read[0].title).toBe('Test');
+    expect(read.items.length).toBe(1);
+    expect(read.items[0].title).toBe('Test');
   });
 });
 
