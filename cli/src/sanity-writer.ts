@@ -30,7 +30,7 @@ import { parseWxr, type WxrItem, type WxrChannelInfo, type WxrCategory, type Wxr
 import { readWxrItems } from './squarespace.js';
 import { coerceDate } from './frontmatter.js';
 import { htmlToPortableText, stripTags } from './block_parser.js';
-import { downloadAllRemoteImages, sqspUrlTransform, sqspFilenameTransform } from './asset_handler.js';
+import { downloadAllRemoteImages, sqspUrlTransform, sqspFilenameTransform, type BatchDownloadResult } from './asset_handler.js';
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -535,7 +535,7 @@ export async function downloadSqspImagesForSanity(
   manifest: Manifest,
   targetDir: string,
   dryRun: boolean,
-): Promise<{ downloaded: number; skipped: number; failed: number; errors: string[] }> {
+): Promise<BatchDownloadResult> {
   return downloadAllRemoteImages(manifest, targetDir, dryRun, 'import/assets', sqspUrlTransform, sqspFilenameTransform);
 }
 

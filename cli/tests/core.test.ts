@@ -24,7 +24,9 @@ import {
   generateMarkdownReport,
   writeMigrationReport,
   writeMarkdownReport,
+  stageStats,
 } from '../src/report.js';
+import type { ReportInput } from '../src/report.js';
 import {
   validateConfig,
   readConfigYaml,
@@ -141,14 +143,102 @@ describe('block_parser', () => {
 
 // ── report ────────────────────────────────────────────────────────────
 
+function sampleReportInput(overrides: Partial<ReportInput> = {}): ReportInput {
+  return {
+    sourcePlatform: 'ghost',
+    destinationPlatform: 'payload',
+    method: 'seed',
+    counts: { posts: 42, pages: 8, tags: 12, authors: 3, images: 67, redirects: 5, skippedDrafts: 3 },
+    stages: {
+      extract: stageStats(50, 50),
+      transform: stageStats(50, 50),
+      load: stageStats(50, 47),
+    },
+    imageDetails: [
+      { originalUrl: 'https://blog.example.com/img1.jpg', localPath: 'media/img1.jpg', status: 'downloaded' },
+      { originalUrl: 'https://blog.example.com/img2.jpg', localPath: 'media/img2.jpg', status: 'downloaded' },
+      { originalUrl: 'https://blog.example.com/img3.jpg', localPath: '', status: 'failed', error: 'HTTP 404: Not Found' },
+    ],
+    quarantined: [
+      { slug: 'draft-post', title: 'Draft Post', reason: 'Draft status — excluded from published output', stage: 'load' },
+    ],
+    redirectsList: [
+      { source: '/old-path', target: '/new-path', statusCode: 301, type: '301' },
+    ],
+    output: { seedScript: 'src/seed.ts', config: 'src/payload.config.ts' },
+    ...overrides,
+  };
+}
+
 describe('report', () => {
+  describe('stageStats', () => {
+    it('computes pass rate from totals', () => {
+      const stats = stageStats(50, 47);
+      expect(stats.total).toBe(50);
+      expect(stats.passed).toBe(47);
+      expect(stats.failed).toBe(3);
+      expect(stats.passRate).toBe(0.94);
+    });
+
+    it('handles zero total', () => {
+      const stats = stageStats(0, 0);
+      expect(stats.passRate).toBe(1);
+    });
+
+    it('rounds to 3 decimal places', () => {
+      const stats = stageStats(3, 2);
+      expect(stats.passRate).toBeLessThanOrEqual(1);
+      const decimalPart = stats.passRate.toString().split('.')[1];
+      if (decimalPart) expect(decimalPart.length).toBeLessThanOrEqual(3);
+    });
+  });
+
+  describe('generateMigrationReport', () => {
+    it('produces a v2 linkcanary schema report', () => {
+      const report = generateMigrationReport(sampleReportInput());
+      expect(report.version).toBe('2');
+      expect(report.schema).toBe('linkcanary');
+    });
+
+    it('includes per-stage pass rates', () => {
+      const report = generateMigrationReport(sampleReportInput());
+      expect(report.stages.extract.passRate).toBe(1);
+      expect(report.stages.load.passRate).toBe(0.94);
+    });
+
+    it('counts image rehost statuses', () => {
+      const report = generateMigrationReport(sampleReportInput());
+      expect(report.images.total).toBe(3);
+      expect(report.images.rehosted).toBe(2);
+      expect(report.images.failed).toBe(1);
+      expect(report.images.skipped).toBe(0);
+    });
+
+    it('preserves image details', () => {
+      const report = generateMigrationReport(sampleReportInput());
+      expect(report.images.details.length).toBe(3);
+      expect(report.images.details[2].status).toBe('failed');
+      expect(report.images.details[2].error).toContain('404');
+    });
+
+    it('includes quarantined posts', () => {
+      const report = generateMigrationReport(sampleReportInput());
+      expect(report.quarantined.length).toBe(1);
+      expect(report.quarantined[0].slug).toBe('draft-post');
+      expect(report.quarantined[0].stage).toBe('load');
+    });
+
+    it('includes redirect list', () => {
+      const report = generateMigrationReport(sampleReportInput());
+      expect(report.redirectsList.length).toBe(1);
+      expect(report.redirectsList[0].source).toBe('/old-path');
+      expect(report.redirectsList[0].type).toBe('301');
+    });
+  });
+
   describe('generateMarkdownReport', () => {
     it('generates a markdown report with route info', () => {
-      const report = generateMigrationReport(
-        'ghost', 'payload', 'seed',
-        { posts: 42, pages: 8, tags: 12, authors: 3, images: 67, imagesDownloaded: 60, imagesFailed: 0, redirects: 5, skippedDrafts: 3 },
-        { seedScript: 'src/seed.ts', config: 'src/payload.config.ts' },
-      );
+      const report = generateMigrationReport(sampleReportInput());
       const md = generateMarkdownReport(report);
       expect(md).toContain('ghost → payload');
       expect(md).toContain('| Posts | 42 |');
@@ -156,27 +246,87 @@ describe('report', () => {
       expect(md).toContain('src/seed.ts');
     });
 
+    it('includes pass rates table', () => {
+      const report = generateMigrationReport(sampleReportInput());
+      const md = generateMarkdownReport(report);
+      expect(md).toContain('## Pass Rates');
+      expect(md).toContain('| extract |');
+      expect(md).toContain('| load |');
+      expect(md).toContain('94.0%');
+    });
+
+    it('includes quarantined posts section', () => {
+      const report = generateMigrationReport(sampleReportInput());
+      const md = generateMarkdownReport(report);
+      expect(md).toContain('## Quarantined Posts (1)');
+      expect(md).toContain('draft-post');
+      expect(md).toContain('Draft status');
+    });
+
+    it('includes failed image rehosts', () => {
+      const report = generateMigrationReport(sampleReportInput());
+      const md = generateMarkdownReport(report);
+      expect(md).toContain('## Failed Image Rehosts (1)');
+      expect(md).toContain('404');
+    });
+
+    it('includes redirect list', () => {
+      const report = generateMigrationReport(sampleReportInput());
+      const md = generateMarkdownReport(report);
+      expect(md).toContain('## Redirects (1)');
+      expect(md).toContain('/old-path');
+      expect(md).toContain('/new-path');
+    });
+
     it('includes handoff template info', () => {
-      const report = generateMigrationReport(
-        'ghost', 'payload', 'seed',
-        { posts: 10, pages: 2, tags: 5, authors: 1, images: 15, imagesDownloaded: 15, imagesFailed: 0, redirects: 0, skippedDrafts: 0 },
-        {},
-      );
+      const report = generateMigrationReport(sampleReportInput());
       const md = generateMarkdownReport(report);
       expect(md).toContain('Astro + Payload');
+    });
+
+    it('omits empty sections', () => {
+      const report = generateMigrationReport(sampleReportInput({
+        quarantined: [],
+        redirectsList: [],
+        imageDetails: [
+          { originalUrl: 'https://example.com/img.jpg', localPath: 'media/img.jpg', status: 'downloaded' },
+        ],
+      }));
+      const md = generateMarkdownReport(report);
+      expect(md).not.toContain('Quarantined');
+      expect(md).not.toContain('Failed Image Rehosts');
+      expect(md).not.toContain('## Redirects');
+    });
+  });
+
+  describe('writeMigrationReport', () => {
+    const tmpDir = resolve(__dirname, 'fixtures', 'report-json-tmp-test');
+
+    it('writes migration-report.json with v2 schema', () => {
+      mkdirSync(tmpDir, { recursive: true });
+      const report = generateMigrationReport(sampleReportInput());
+      const jsonPath = writeMigrationReport(report, tmpDir);
+      expect(existsSync(jsonPath)).toBe(true);
+      const parsed = JSON.parse(readFileSync(jsonPath, 'utf-8'));
+      expect(parsed.version).toBe('2');
+      expect(parsed.schema).toBe('linkcanary');
+      expect(parsed.stages.extract.passRate).toBe(1);
+      expect(parsed.images.rehosted).toBe(2);
+
+      rmSync(tmpDir, { recursive: true, force: true });
     });
   });
 
   describe('writeMarkdownReport', () => {
-    const tmpDir = resolve(__dirname, 'fixtures', 'report-tmp-test');
+    const tmpDir = resolve(__dirname, 'fixtures', 'report-md-tmp-test');
 
     it('writes migration-report.md to disk', () => {
       mkdirSync(tmpDir, { recursive: true });
-      const report = generateMigrationReport(
-        'gatsby', 'astro', 'file',
-        { posts: 10, pages: 2, tags: 5, authors: 1, images: 15, imagesDownloaded: 0, imagesFailed: 0, redirects: 0, skippedDrafts: 0 },
-        {},
-      );
+      const report = generateMigrationReport(sampleReportInput({
+        sourcePlatform: 'gatsby',
+        destinationPlatform: 'astro',
+        method: 'file',
+      }));
       const mdPath = writeMarkdownReport(report, tmpDir);
       expect(existsSync(mdPath)).toBe(true);
       const content = readFileSync(mdPath, 'utf-8');

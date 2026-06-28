@@ -13,7 +13,7 @@ import { resolve, basename } from 'node:path';
 import type { Manifest, PluginMapping } from './manifest.js';
 import { coerceDate } from './frontmatter.js';
 import { parseWxr, wxrSlugify, type WxrItem, type WxrChannelInfo } from './wxr-parser.js';
-import { checksumString, downloadImage, downloadAllRemoteImages, sqspUrlTransform, sqspFilenameTransform } from './asset_handler.js';
+import { checksumString, downloadImage, downloadAllRemoteImages, sqspUrlTransform, sqspFilenameTransform, type BatchDownloadResult } from './asset_handler.js';
 import { convertHtmlToMarkdown as sharedConvertHtmlToMarkdown } from './block_parser.js';
 
 // Re-export WXR types for consumers that import from squarespace.ts
@@ -139,7 +139,7 @@ export async function downloadCdnImage(url: string, targetDir: string): Promise<
   });
 }
 
-export async function downloadAllCdnImages(manifest: Manifest, targetDir: string, dryRun: boolean): Promise<{ downloaded: number; skipped: number; failed: number; errors: string[] }> {
+export async function downloadAllCdnImages(manifest: Manifest, targetDir: string, dryRun: boolean): Promise<BatchDownloadResult> {
   return downloadAllRemoteImages(manifest, targetDir, dryRun, 'src/assets/blog', sqspUrlTransform, sqspFilenameTransform);
 }
 

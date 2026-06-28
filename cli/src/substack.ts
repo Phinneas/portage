@@ -15,7 +15,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 
 import { resolve, basename, join } from 'node:path';
 import type { Manifest, PluginMapping } from './manifest.js';
 import { coerceDate } from './frontmatter.js';
-import { checksumString, downloadImage, downloadAllRemoteImages, substackUrlTransform, substackFilenameTransform } from './asset_handler.js';
+import { checksumString, downloadImage, downloadAllRemoteImages, substackUrlTransform, substackFilenameTransform, type BatchDownloadResult } from './asset_handler.js';
 import TurndownService from 'turndown';
 
 // ── Types ───────────────────────────────────────────────────────────────
@@ -482,7 +482,7 @@ export async function downloadAllCdnImages(
   manifest: Manifest,
   targetDir: string,
   dryRun: boolean
-): Promise<{ downloaded: number; skipped: number; failed: number; errors: string[] }> {
+): Promise<BatchDownloadResult> {
   return downloadAllRemoteImages(manifest, targetDir, dryRun, 'src/assets/blog', substackUrlTransform, substackFilenameTransform);
 }
 

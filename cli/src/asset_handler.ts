@@ -25,6 +25,14 @@ export interface BatchDownloadResult {
   skipped: number;
   failed: number;
   errors: string[];
+  details: DownloadDetail[];
+}
+
+export interface DownloadDetail {
+  originalUrl: string;
+  localPath: string;
+  status: 'downloaded' | 'skipped' | 'failed';
+  error?: string;
 }
 
 export type ImageSubdir = 'src/assets/blog' | 'media' | 'import/assets' | 'src/assets';
@@ -92,10 +100,19 @@ export async function downloadAllRemoteImages(
   let skipped = 0;
   let failed = 0;
   const errors: string[] = [];
+  const details: DownloadDetail[] = [];
 
   for (const img of manifest.extract.images) {
-    if (img.source !== 'remote') { skipped++; continue; }
-    if (dryRun) { skipped++; continue; }
+    if (img.source !== 'remote') {
+      skipped++;
+      details.push({ originalUrl: img.relativePath, localPath: '', status: 'skipped' });
+      continue;
+    }
+    if (dryRun) {
+      skipped++;
+      details.push({ originalUrl: img.absolutePath, localPath: '', status: 'skipped' });
+      continue;
+    }
 
     const result = await downloadImage({
       url: img.absolutePath,
@@ -105,11 +122,18 @@ export async function downloadAllRemoteImages(
       filenameTransform,
     });
 
-    if (result.success) downloaded++;
-    else { failed++; if (result.error) errors.push(`${img.relativePath}: ${result.error}`); }
+    if (result.success) {
+      downloaded++;
+      details.push({ originalUrl: img.absolutePath, localPath: result.localPath, status: 'downloaded' });
+    } else {
+      failed++;
+      const errMsg = result.error || 'unknown';
+      errors.push(`${img.relativePath}: ${errMsg}`);
+      details.push({ originalUrl: img.absolutePath, localPath: result.localPath, status: 'failed', error: errMsg });
+    }
   }
 
-  return { downloaded, skipped, failed, errors };
+  return { downloaded, skipped, failed, errors, details };
 }
 
 // ── Platform-Specific URL Transforms ─────────────────────────────────────

@@ -21,7 +21,7 @@ import {
   type GhostExport, type GhostPost, type GhostTag, type GhostAuthor,
   readGhostExport,
 } from './ghost.js';
-import { downloadImage, downloadAllRemoteImages, ghostUrlTransform, ghostFilenameTransform } from './asset_handler.js';
+import { downloadImage, downloadAllRemoteImages, ghostUrlTransform, ghostFilenameTransform, type BatchDownloadResult } from './asset_handler.js';
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -401,7 +401,7 @@ export async function downloadAllGhostImages(
   manifest: Manifest,
   targetDir: string,
   dryRun: boolean
-): Promise<{ downloaded: number; skipped: number; failed: number; errors: string[] }> {
+): Promise<BatchDownloadResult> {
   return downloadAllRemoteImages(manifest, targetDir, dryRun, 'media', ghostUrlTransform, ghostFilenameTransform);
 }
 

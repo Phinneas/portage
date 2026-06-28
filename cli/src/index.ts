@@ -14,7 +14,8 @@ import { writePayloadSeed, downloadAllGhostImages } from './payload-writer.js';
 import { writeSanityOutput, downloadSqspImagesForSanity } from './sanity-writer.js';
 import { extractNext, transformNextContent, mapNextPluginsToAstro } from './next.js';
 import { generateHandoff } from './creatives.js';
-import { generateMigrationReport, writeMigrationReport, writeMarkdownReport } from './report.js';
+import { generateMigrationReport, writeMigrationReport, writeMarkdownReport, stageStats } from './report.js';
+import type { ReportInput, ImageRehost, QuarantinedPost, RedirectEntry } from './report.js';
 import { transformContent, rewriteMdx, writeCollections, localizeAssets, writeRedirects, writeSquarespaceCollections, writeSubstackCollections, writeGhostCollections } from './astro-writer.js';
 
 const program = new Command();
@@ -274,7 +275,7 @@ program.command('load')
       }
 
       let collectionResult;
-      let cdnResult: { downloaded: number; skipped: number; failed: number; errors: string[] } | undefined;
+      let cdnResult: import('./asset_handler.js').BatchDownloadResult | undefined;
       let payloadResult: { written: number; skippedDrafts: number; mediaDir: string } | undefined;
       let sanityWriteResult: { documentsWritten: number; assetsDownloaded: number; schemaTypes: number; outputPath: string } | undefined;
 
@@ -368,28 +369,88 @@ program.command('load')
 
       // ── Migration report ──────────────────────────────────────────────
       if (!opts.dryRun) {
-        const report = generateMigrationReport(
-          manifest.source.platform,
+        const totalContent = manifest.extract.counts.posts + manifest.extract.counts.pages;
+        const loadPassed = totalContent - manifest.load.skippedDrafts;
+
+        // Build image rehost details from CDN download results
+        const imageDetails: ImageRehost[] = (cdnResult?.details || []).map((d) => ({
+          originalUrl: d.originalUrl,
+          localPath: d.localPath,
+          status: d.status,
+          error: d.error,
+        }));
+
+        // Build quarantined posts list
+        const quarantined: QuarantinedPost[] = [];
+        // Drafts are quarantined at load stage
+        if (collectionResult?.skippedDrafts) {
+          quarantined.push({
+            slug: `_drafts_${collectionResult.skippedDrafts}`,
+            title: `${collectionResult.skippedDrafts} draft(s) excluded`,
+            reason: 'Draft status — excluded from published output',
+            stage: 'load',
+          });
+        }
+        if (payloadResult?.skippedDrafts) {
+          quarantined.push({
+            slug: `_drafts_${payloadResult.skippedDrafts}`,
+            title: `${payloadResult.skippedDrafts} draft(s) excluded`,
+            reason: 'Draft status — excluded from seed script',
+            stage: 'load',
+          });
+        }
+
+        // Build redirect list from manifest
+        const redirectsList: RedirectEntry[] = [];
+        if (manifest.load.redirects > 0) {
+          // Read the redirect file if it was written
+          const redirectsPath = resolve(targetDir, 'public/_redirects');
+          try {
+            const { readFileSync } = await import('node:fs');
+            const redirectContent = readFileSync(redirectsPath, 'utf-8');
+            for (const line of redirectContent.split('\n')) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith('#')) continue;
+              const [source, target] = trimmed.split(/\s+/);
+              if (source && target) {
+                redirectsList.push({ source, target, statusCode: 301, type: '301' });
+              }
+            }
+          } catch {
+            // Redirects file not found or unreadable; list stays empty
+          }
+        }
+
+        const reportInput: ReportInput = {
+          sourcePlatform: manifest.source.platform,
           destinationPlatform,
-          opts.method || 'seed',
-          {
+          method: opts.method || 'seed',
+          counts: {
             posts: manifest.extract.counts.posts,
             pages: manifest.extract.counts.pages,
             tags: manifest.extract.counts.tags,
             authors: manifest.extract.counts.authors,
             images: manifest.extract.counts.images,
-            imagesDownloaded: cdnResult?.downloaded || 0,
-            imagesFailed: cdnResult?.failed || 0,
             redirects: manifest.load.redirects,
             skippedDrafts: manifest.load.skippedDrafts,
           },
-          {
+          stages: {
+            extract: stageStats(totalContent, totalContent),
+            transform: stageStats(totalContent, totalContent),
+            load: stageStats(totalContent, loadPassed),
+          },
+          imageDetails,
+          quarantined,
+          redirectsList,
+          output: {
             seedScript: payloadResult ? 'src/seed.ts' : undefined,
             config: payloadResult ? 'src/payload.config.ts' : sanityWriteResult ? 'sanity-schema.ts' : undefined,
             mediaDir: payloadResult?.mediaDir,
             envFile: payloadResult || sanityWriteResult ? '.env' : undefined,
           },
-        );
+        };
+
+        const report = generateMigrationReport(reportInput);
         const reportPath = writeMigrationReport(report, targetDir);
         const mdPath = writeMarkdownReport(report, targetDir);
         console.log(chalk.dim('  → ') + `Migration report: ${reportPath}`);
