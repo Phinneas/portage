@@ -15,7 +15,7 @@ import { writeSanityOutput, downloadSqspImagesForSanity } from './sanity-writer.
 import { extractNext, transformNextContent, mapNextPluginsToAstro } from './next.js';
 import { generateHandoff } from './creatives.js';
 import { generateMigrationReport, writeMigrationReport, writeMarkdownReport } from './report.js';
-import { transformContent, rewriteMdx, writeCollections, localizeAssets, writeRedirects, writeSquarespaceCollections, writeSubstackCollections } from './astro-writer.js';
+import { transformContent, rewriteMdx, writeCollections, localizeAssets, writeRedirects, writeSquarespaceCollections, writeSubstackCollections, writeGhostCollections } from './astro-writer.js';
 
 const program = new Command();
 
@@ -294,16 +294,16 @@ program.command('load')
         collectionResult = writeSubstackCollections(manifest, targetDir, opts.dryRun, opts.hero as 'first-image' | 'none');
         cdnResult = await downloadSubstackCdnImages(manifest, targetDir, opts.dryRun);
       } else if (manifest.source.platform === 'ghost') {
-        // Ghost can target either Astro or Payload
+        // Ghost can target Astro or Payload
         const target = opts.target || 'astro';
         if (target === 'payload') {
           payloadResult = writePayloadSeed(manifest, targetDir, opts.dryRun);
           cdnResult = await downloadAllGhostImages(manifest, targetDir, opts.dryRun);
           collectionResult = { written: payloadResult.written, skippedDrafts: payloadResult.skippedDrafts };
         } else {
-          // ghost → astro: not yet implemented (spec-only route)
-          spinner.fail(chalk.red('Ghost → Astro load is not yet implemented. Use --target payload for the Payload CMS destination.'));
-          process.exit(1);
+          // Ghost → Astro: write Markdown files with frontmatter
+          collectionResult = writeGhostCollections(manifest, targetDir, opts.dryRun, opts.hero as 'first-image' | 'none');
+          cdnResult = await downloadAllGhostImages(manifest, targetDir, opts.dryRun);
         }
       } else {
         collectionResult = writeCollections(manifest, targetDir, opts.dryRun);

@@ -25,6 +25,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, basename } from 'node:path';
 import type { Manifest, PluginMapping } from './manifest.js';
 import { checksumString } from './asset_handler.js';
+import { coerceDate } from './frontmatter.js';
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -407,6 +408,7 @@ export const GHOST_PAYLOAD_FIELD_MAP: Record<string, string> = {
 // ── Ghost → Payload Frontmatter (for Astro output) ─────────────────────
 
 export const GHOST_ASTRO_FIELD_MAP: Record<string, string> = {
+  uuid: 'ghostUuid',
   title: 'title',
   slug: '_slug',
   customExcerpt: 'description',
@@ -425,6 +427,83 @@ export const GHOST_ASTRO_FIELD_MAP: Record<string, string> = {
   visibility: 'access',
   status: 'draft',
 };
+
+// ── Ghost → Astro frontmatter mapping ────────────────────────────────
+
+export function mapGhostFrontmatter(
+  post: GhostPost,
+  tagNames: string[],
+  authorNames: string[],
+  heroStrategy: 'first-image' | 'none' = 'first-image',
+): Record<string, unknown> {
+  const astro: Record<string, unknown> = {};
+
+  // Preserve Ghost GID for reference
+  astro.ghostUuid = post.uuid;
+
+  astro.title = post.title;
+
+  if (post.slug) astro._slug = post.slug;
+
+  if (post.customExcerpt) astro.description = post.customExcerpt;
+
+  const pubDate = coerceDate(post.publishedAt);
+  if (pubDate) astro.pubDate = pubDate;
+
+  if (post.updatedAt && post.updatedAt !== post.publishedAt) {
+    const updDate = coerceDate(post.updatedAt);
+    if (updDate) astro.updatedDate = updDate;
+  }
+
+  // Tags: resolved names from join table
+  if (tagNames.length > 0) astro.tags = tagNames;
+
+  // Authors: resolved names from join table
+  if (authorNames.length > 0) astro.authors = authorNames;
+
+  // Feature image
+  if (post.featureImage) {
+    if (heroStrategy === 'first-image') {
+      const filename = basename(new URL(post.featureImage.replace(/\/size\/w\d+\//, '/content/images/')).pathname);
+      astro.heroImage = `../../assets/blog/${filename}`;
+    } else {
+      astro.heroImage = post.featureImage;
+    }
+  }
+
+  if (post.featureImageAlt) astro.heroImageAlt = post.featureImageAlt;
+  if (post.featureImageCaption) {
+    // Strip HTML from caption for frontmatter
+    astro.heroImageCaption = post.featureImageCaption.replace(/<[^>]+>/g, '').trim();
+  }
+
+  // Visibility → access control
+  if (post.visibility === 'members') astro.access = 'members';
+  else if (post.visibility === 'paid') astro.access = 'paid';
+  else astro.access = 'public';
+
+  // Draft status
+  astro.draft = post.status === 'draft' || post.status === 'scheduled';
+
+  // Featured
+  astro.featured = post.featured;
+
+  // SEO
+  if (post.metaTitle || post.metaDescription) {
+    const seo: Record<string, string> = {};
+    if (post.metaTitle) seo.title = post.metaTitle;
+    if (post.metaDescription) seo.description = post.metaDescription;
+    astro.seo = seo;
+  }
+
+  // Canonical URL
+  if (post.canonicalUrl) astro.canonicalURL = post.canonicalUrl;
+
+  // Type hint for collection routing
+  if (post.type === 'page') astro.type = 'page';
+
+  return astro;
+}
 
 // ── Sidecar Persistence ────────────────────────────────────────────────
 

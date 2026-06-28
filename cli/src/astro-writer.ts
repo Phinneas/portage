@@ -16,6 +16,8 @@ import { deriveSlug as deriveJekyllSlug, JEKYLL_FIELD_KEY_MAP, convertLiquidTags
 import { mapSquarespaceFrontmatter, convertHtmlToMarkdown, deriveSlug as deriveSqSlug, readWxrItems } from './squarespace.js';
 import { mapSubstackFrontmatter, convertHtmlToMarkdown as convertSubstackHtml, readSubstackPosts } from './substack.js';
 import { mapNextFrontmatter, rewriteNextLink, rewriteNextImage, rewriteNextHead, deriveSlug as deriveNextSlug } from './next.js';
+import { mapGhostFrontmatter, readGhostExport } from './ghost.js';
+import { convertHtmlToMarkdown as convertGhostHtml } from './block_parser.js';
 
 // ── MDX rewriting ─────────────────────────────────────────────────────
 
@@ -391,6 +393,74 @@ export function writeSubstackCollections(manifest: Manifest, targetDir: string, 
     writeContentConfig(targetDir, manifest);
     writeAstroConfig(targetDir, manifest);
   }
+  return { written, skippedDrafts };
+}
+
+// ── Ghost → Astro collection writer ────────────────────────────────────
+
+export interface GhostCollectionResult {
+  written: number;
+  skippedDrafts: number;
+}
+
+export function writeGhostCollections(
+  manifest: Manifest,
+  targetDir: string,
+  dryRun: boolean,
+  heroStrategy: 'first-image' | 'none' = 'first-image',
+): GhostCollectionResult {
+  let written = 0;
+  let skippedDrafts = 0;
+
+  const ghostExport = readGhostExport(targetDir);
+  if (!ghostExport) {
+    throw new Error('No portage-ghost-export.json found. Run `portage extract` first.');
+  }
+
+  const blogDir = resolve(targetDir, 'src/content/blog');
+  const pagesDir = resolve(targetDir, 'src/content/pages');
+  const assetsDir = resolve(targetDir, 'src/assets/blog');
+
+  if (!dryRun) {
+    mkdirSync(blogDir, { recursive: true });
+    mkdirSync(pagesDir, { recursive: true });
+    mkdirSync(assetsDir, { recursive: true });
+  }
+
+  // Build lookup maps: tag ID → name, author ID → name
+  const tagNameMap = new Map<string, string>();
+  for (const tag of ghostExport.tags) tagNameMap.set(tag.id, tag.name);
+
+  const authorNameMap = new Map<string, string>();
+  for (const author of ghostExport.authors) authorNameMap.set(author.id, author.name);
+
+  for (const post of ghostExport.posts) {
+    if (post.status === 'draft' || post.status === 'scheduled') {
+      skippedDrafts++;
+    }
+
+    const tagNames = post.tagIds.map((id) => tagNameMap.get(id)).filter(Boolean) as string[];
+    const authorNames = post.authorIds.map((id) => authorNameMap.get(id)).filter(Boolean) as string[];
+
+    const astroFm = mapGhostFrontmatter(post, tagNames, authorNames, heroStrategy);
+    const slug = post.slug;
+    const collection = post.type === 'page' ? 'pages' : 'blog';
+    const outDir = collection === 'pages' ? pagesDir : blogDir;
+    const body = convertGhostHtml(post.html, 'generic');
+    const outPath = resolve(outDir, `${slug}.md`);
+
+    if (!dryRun) {
+      mkdirSync(dirname(outPath), { recursive: true });
+      writeFileSync(outPath, serializeFrontmatter(astroFm) + body, 'utf-8');
+    }
+    written++;
+  }
+
+  if (!dryRun) {
+    writeContentConfig(targetDir, manifest);
+    writeAstroConfig(targetDir, manifest);
+  }
+
   return { written, skippedDrafts };
 }
 

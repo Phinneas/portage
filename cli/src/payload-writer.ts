@@ -57,6 +57,9 @@ export function mapGhostPostToPayload(
 ): Record<string, unknown> {
   const doc: Record<string, unknown> = {};
 
+  // Preserve Ghost GID for reference
+  doc.ghostUuid = post.uuid;
+
   doc.title = post.title;
   doc.slug = post.slug;
 

@@ -10,6 +10,7 @@ import {
   GHOST_ASTRO_FIELD_MAP,
   writeGhostExport,
   readGhostExport,
+  mapGhostFrontmatter,
 } from '../src/ghost.js';
 import {
   mapGhostPostToPayload,
@@ -442,5 +443,151 @@ describe('writeGhostExport / readGhostExport', () => {
 
   it('returns null when no sidecar exists', () => {
     expect(readGhostExport('/nonexistent')).toBeNull();
+  });
+});
+
+// ── Ghost → Astro Frontmatter Mapping ──────────────────────────────────
+
+describe('mapGhostFrontmatter', () => {
+  const ghostExport = parseGhostExport(GHOST_JSON_PATH, 'https://blog.example.com');
+  const post = ghostExport.posts[0]; // "Leaving the Walled Garden" - published, public, featured
+
+  it('preserves ghostUuid', () => {
+    const fm = mapGhostFrontmatter(post, ['migration', 'astro'], ['Dana Reyes']);
+    expect(fm.ghostUuid).toBe(post.uuid);
+  });
+
+  it('maps title', () => {
+    const fm = mapGhostFrontmatter(post, [], []);
+    expect(fm.title).toBe('Leaving the Walled Garden');
+  });
+
+  it('maps slug to _slug', () => {
+    const fm = mapGhostFrontmatter(post, [], []);
+    expect(fm._slug).toBe('leaving-the-walled-garden');
+  });
+
+  it('maps custom excerpt to description', () => {
+    const fm = mapGhostFrontmatter(post, [], []);
+    expect(fm.description).toBe('Why we moved our publication off a hosted platform.');
+  });
+
+  it('maps publishedAt to pubDate', () => {
+    const fm = mapGhostFrontmatter(post, [], []);
+    expect(fm.pubDate).toBeTruthy();
+  });
+
+  it('maps updatedAt to updatedDate', () => {
+    const fm = mapGhostFrontmatter(post, [], []);
+    expect(fm.updatedDate).toBeTruthy();
+  });
+
+  it('maps tag names from join table', () => {
+    const fm = mapGhostFrontmatter(post, ['migration', 'astro'], []);
+    expect(fm.tags).toEqual(['migration', 'astro']);
+  });
+
+  it('maps author names from join table', () => {
+    const fm = mapGhostFrontmatter(post, [], ['Dana Reyes']);
+    expect(fm.authors).toEqual(['Dana Reyes']);
+  });
+
+  it('maps feature image to heroImage with relative path', () => {
+    const fm = mapGhostFrontmatter(post, [], [], 'first-image');
+    expect(fm.heroImage).toContain('../../assets/blog/');
+  });
+
+  it('maps feature image to heroImage as-is when heroStrategy is none', () => {
+    const fm = mapGhostFrontmatter(post, [], [], 'none');
+    expect(fm.heroImage).toContain('blog.example.com');
+  });
+
+  it('maps feature image alt text', () => {
+    const fm = mapGhostFrontmatter(post, [], []);
+    expect(fm.heroImageAlt).toBe('A weathered lock gate at low tide');
+  });
+
+  it('strips HTML from feature image caption', () => {
+    const fm = mapGhostFrontmatter(ghostExport.posts[0], [], []);
+    // The fixture has a caption with <em> tags
+    if (fm.heroImageCaption) {
+      expect(fm.heroImageCaption).not.toContain('<');
+    }
+  });
+
+  it('maps visibility public to access public', () => {
+    const fm = mapGhostFrontmatter(post, [], []);
+    expect(fm.access).toBe('public');
+  });
+
+  it('maps visibility members to access members', () => {
+    const membersPost = ghostExport.posts[1]; // "Harbor Notes" - members
+    const fm = mapGhostFrontmatter(membersPost, [], []);
+    expect(fm.access).toBe('members');
+  });
+
+  it('maps draft status', () => {
+    const draftPost = ghostExport.posts[2]; // "Work in Progress" - draft
+    const fm = mapGhostFrontmatter(draftPost, [], []);
+    expect(fm.draft).toBe(true);
+  });
+
+  it('maps published status', () => {
+    const fm = mapGhostFrontmatter(post, [], []);
+    expect(fm.draft).toBe(false);
+  });
+
+  it('maps featured flag', () => {
+    const fm = mapGhostFrontmatter(post, [], []);
+    expect(fm.featured).toBe(true);
+  });
+
+  it('maps SEO group', () => {
+    const pagePost = ghostExport.posts[3]; // "About Us" - has meta_title
+    const fm = mapGhostFrontmatter(pagePost, [], []);
+    expect(fm.seo).toBeDefined();
+    const seo = fm.seo as Record<string, string>;
+    expect(seo.title).toBe('About Us - My Ghost Publication');
+  });
+
+  it('maps canonical URL', () => {
+    const fm = mapGhostFrontmatter(ghostExport.posts[1], [], []); // Harbor Notes has canonical
+    expect(fm.canonicalURL).toContain('harbor-notes');
+  });
+
+  it('maps type for pages', () => {
+    const pagePost = ghostExport.posts[3]; // "About Us" - page type
+    const fm = mapGhostFrontmatter(pagePost, [], []);
+    expect(fm.type).toBe('page');
+  });
+
+  it('does not set type for posts', () => {
+    const fm = mapGhostFrontmatter(post, [], []);
+    expect(fm.type).toBeUndefined();
+  });
+
+  it('maps empty tag/author arrays gracefully', () => {
+    const fm = mapGhostFrontmatter(post, [], []);
+    expect(fm.tags).toBeUndefined();
+    expect(fm.authors).toBeUndefined();
+  });
+});
+
+// ── GHOST_ASTRO_FIELD_MAP includes ghostUuid ────────────────────────────
+
+describe('GHOST_ASTRO_FIELD_MAP ghostUuid', () => {
+  it('maps uuid to ghostUuid', () => {
+    expect(GHOST_ASTRO_FIELD_MAP.uuid).toBe('ghostUuid');
+  });
+});
+
+// ── Payload ghostUuid field ───────────────────────────────────────────
+
+describe('mapGhostPostToPayload ghostUuid', () => {
+  it('preserves ghostUuid in Payload document', () => {
+    const emptyMaps: Record<string, string> = {};
+    const post = parseGhostExport(GHOST_JSON_PATH, 'https://blog.example.com').posts[0];
+    const doc = mapGhostPostToPayload(post, {}, emptyMaps, emptyMaps, emptyMaps);
+    expect(doc.ghostUuid).toBe(post.uuid);
   });
 });
