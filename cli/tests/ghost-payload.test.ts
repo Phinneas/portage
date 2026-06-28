@@ -11,7 +11,11 @@ import {
   writeGhostExport,
   readGhostExport,
   mapGhostFrontmatter,
+  extractGhost,
 } from '../src/ghost.js';
+import {
+  writeGhostCollections,
+} from '../src/astro-writer.js';
 import {
   mapGhostPostToPayload,
   mapGhostTagToPayload,
@@ -20,6 +24,7 @@ import {
   generateSeedScript,
 } from '../src/payload-writer.js';
 import type { GhostExport } from '../src/ghost.js';
+import { splitFrontmatter } from '../src/frontmatter.js';
 
 const FIXTURES = resolve(__dirname, 'fixtures');
 const GHOST_FIXTURES = resolve(FIXTURES, 'ghost-export');
@@ -589,5 +594,99 @@ describe('mapGhostPostToPayload ghostUuid', () => {
     const post = parseGhostExport(GHOST_JSON_PATH, 'https://blog.example.com').posts[0];
     const doc = mapGhostPostToPayload(post, {}, emptyMaps, emptyMaps, emptyMaps);
     expect(doc.ghostUuid).toBe(post.uuid);
+  });
+});
+
+// ── Ghost → Astro integration test (extract → transform → load) ──────
+
+describe('Ghost → Astro integration', () => {
+  const tmpDir = resolve(__dirname, 'fixtures', 'ghost-integration-tmp');
+
+  it('runs extract → load pipeline and verifies output files', async () => {
+    // 1. Extract: parse Ghost JSON, write sidecar
+    const extractResult = await extractGhost({
+      export: GHOST_JSON_PATH,
+      ghostUrl: 'https://blog.example.com',
+      to: tmpDir,
+    });
+
+    expect(extractResult.ghostExport.posts.length).toBeGreaterThan(0);
+    expect(extractResult.ghostExport.tags.length).toBeGreaterThan(0);
+    expect(extractResult.ghostExport.authors.length).toBeGreaterThan(0);
+
+    // 2. Write sidecar (mimics transform step persistence)
+    writeGhostExport(extractResult.ghostExport, tmpDir);
+
+    // 3. Load: write Astro content collections
+    const ghostImages = extractGhostImages(extractResult.ghostExport);
+    const manifest = {
+      version: '1' as const,
+      source: { platform: 'ghost' as const, path: tmpDir },
+      extract: {
+        contentFiles: extractResult.ghostExport.posts.map((p) => ({
+          relativePath: `posts/${p.slug}.html`,
+          absolutePath: resolve(tmpDir, `posts/${p.slug}.html`),
+          frontmatter: { title: p.title, slug: p.slug },
+          rawContent: p.html,
+          checksum: 'abc',
+        })),
+        images: ghostImages,
+        plugins: [],
+        queries: [],
+        counts: {
+          posts: extractResult.ghostExport.posts.filter((p) => p.type === 'post').length,
+          pages: extractResult.ghostExport.posts.filter((p) => p.type === 'page').length,
+          tags: extractResult.ghostExport.tags.length,
+          authors: extractResult.ghostExport.authors.length,
+          images: ghostImages.length,
+          plugins: 0,
+          queries: 0,
+        },
+      },
+      transform: { fieldMappings: 10, rewrites: [], unmappedPlugins: [] },
+      load: { writtenFiles: 0, redirects: 0, clientOnlyRoutes: 0, skippedDrafts: 0 },
+    };
+
+    const result = writeGhostCollections(manifest, tmpDir, false, 'none');
+    expect(result.written).toBe(extractResult.ghostExport.posts.length);
+    expect(result.skippedDrafts).toBeGreaterThan(0);
+
+    // 4. Verify output directory structure
+    const blogDir = resolve(tmpDir, 'src/content/blog');
+    const pagesDir = resolve(tmpDir, 'src/content/pages');
+    expect(existsSync(blogDir)).toBe(true);
+    expect(existsSync(pagesDir)).toBe(true);
+
+    // 5. Verify each written file has valid frontmatter
+    const blogPosts = extractResult.ghostExport.posts.filter((p) => p.type === 'post');
+    for (const post of blogPosts) {
+      const filePath = resolve(blogDir, `${post.slug}.md`);
+      expect(existsSync(filePath)).toBe(true);
+
+      const content = readFileSync(filePath, 'utf-8');
+      const parsed = splitFrontmatter(content);
+      expect(parsed).not.toBeNull();
+
+      const fm = parsed!.frontmatter;
+      expect(fm.title).toBe(post.title);
+      expect(fm.ghostUuid).toBe(post.uuid);
+      expect(fm.access).toBeDefined();
+    }
+
+    // 6. Verify page output
+    const pagePosts = extractResult.ghostExport.posts.filter((p) => p.type === 'page');
+    for (const page of pagePosts) {
+      const filePath = resolve(pagesDir, `${page.slug}.md`);
+      expect(existsSync(filePath)).toBe(true);
+
+      const content = readFileSync(filePath, 'utf-8');
+      const parsed = splitFrontmatter(content);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.frontmatter.ghostUuid).toBe(page.uuid);
+      expect(parsed!.frontmatter.type).toBe('page');
+    }
+
+    // Cleanup
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 });
