@@ -13,10 +13,10 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { resolve, basename, join } from 'node:path';
-import { createHash } from 'node:crypto';
-import TurndownService from 'turndown';
 import type { Manifest, PluginMapping } from './manifest.js';
 import { coerceDate } from './frontmatter.js';
+import { checksumString, downloadImage, downloadAllRemoteImages, substackUrlTransform, substackFilenameTransform } from './asset_handler.js';
+import TurndownService from 'turndown';
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -466,34 +466,16 @@ function deriveImageFilename(url: string): string {
   }
 }
 
-// ── CDN image download ─────────────────────────────────────────────────
+// ── CDN image download (delegates to asset_handler) ──────────────────
 
 export async function downloadCdnImage(url: string, targetDir: string): Promise<{ success: boolean; localPath: string; error?: string }> {
-  const bareUrl = url.replace(/\?.*$/, '');
-  const filename = deriveImageFilename(bareUrl);
-  const localPath = resolve(targetDir, 'src/assets/blog', filename);
-
-  if (existsSync(localPath)) {
-    return { success: true, localPath };
-  }
-
-  // Request original quality by stripping resize params
-  const downloadUrl = url.replace(/[?&]format=\w+/, '').replace(/[?&]w=\d+/, '');
-
-  try {
-    mkdirSync(resolve(targetDir, 'src/assets/blog'), { recursive: true });
-
-    const response = await fetch(downloadUrl);
-    if (!response.ok) {
-      return { success: false, localPath, error: `HTTP ${response.status}: ${response.statusText}` };
-    }
-
-    const buffer = Buffer.from(await response.arrayBuffer());
-    writeFileSync(localPath, buffer);
-    return { success: true, localPath };
-  } catch (err) {
-    return { success: false, localPath, error: err instanceof Error ? err.message : String(err) };
-  }
+  return downloadImage({
+    url,
+    targetDir,
+    subdir: 'src/assets/blog',
+    urlTransform: substackUrlTransform,
+    filenameTransform: substackFilenameTransform,
+  });
 }
 
 export async function downloadAllCdnImages(
@@ -501,21 +483,7 @@ export async function downloadAllCdnImages(
   targetDir: string,
   dryRun: boolean
 ): Promise<{ downloaded: number; skipped: number; failed: number; errors: string[] }> {
-  let downloaded = 0;
-  let skipped = 0;
-  let failed = 0;
-  const errors: string[] = [];
-
-  for (const img of manifest.extract.images) {
-    if (img.source !== 'remote') { skipped++; continue; }
-    if (dryRun) { skipped++; continue; }
-
-    const result = await downloadCdnImage(img.absolutePath, targetDir);
-    if (result.success) downloaded++;
-    else { failed++; if (result.error) errors.push(`${img.relativePath}: ${result.error}`); }
-  }
-
-  return { downloaded, skipped, failed, errors };
+  return downloadAllRemoteImages(manifest, targetDir, dryRun, 'src/assets/blog', substackUrlTransform, substackFilenameTransform);
 }
 
 // ── Hero derivation ────────────────────────────────────────────────────
@@ -670,7 +638,3 @@ export function transformSubstackContent(posts: SubstackPost[]): TransformResult
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
-
-function checksumString(content: string): string {
-  return createHash('sha256').update(content).digest('hex').slice(0, 12);
-}

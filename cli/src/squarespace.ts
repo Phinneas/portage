@@ -10,11 +10,11 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, basename } from 'node:path';
-import { createHash } from 'node:crypto';
-import TurndownService from 'turndown';
-import { type Manifest, type PluginMapping } from './manifest.js';
+import type { Manifest, PluginMapping } from './manifest.js';
 import { coerceDate } from './frontmatter.js';
 import { parseWxr, wxrSlugify, type WxrItem, type WxrChannelInfo } from './wxr-parser.js';
+import { checksumString, downloadImage, downloadAllRemoteImages, sqspUrlTransform, sqspFilenameTransform } from './asset_handler.js';
+import { convertHtmlToMarkdown as sharedConvertHtmlToMarkdown } from './block_parser.js';
 
 // Re-export WXR types for consumers that import from squarespace.ts
 export type { WxrItem, WxrChannelInfo } from './wxr-parser.js';
@@ -130,92 +130,23 @@ export const SQSP_CDN_BASE = 'images.squarespace-cdn.com';
  *   5. Report any download failures (image may have expired from CDN)
  */
 export async function downloadCdnImage(url: string, targetDir: string): Promise<{ success: boolean; localPath: string; error?: string }> {
-  const filename = basename(new URL(url).pathname);
-  const localPath = resolve(targetDir, 'src/assets/blog', filename);
-
-  // Skip if already downloaded
-  if (existsSync(localPath)) {
-    return { success: true, localPath };
-  }
-
-  // Request at highest quality (2500w is max; no "original" option)
-  const downloadUrl = url.includes('?format=') ? url.replace(/\?format=\w+$/, '?format=2500w') : url + '?format=2500w';
-
-  try {
-    mkdirSync(resolve(targetDir, 'src/assets/blog'), { recursive: true });
-
-    const response = await fetch(downloadUrl);
-    if (!response.ok) {
-      return { success: false, localPath, error: `HTTP ${response.status}: ${response.statusText}` };
-    }
-
-    const buffer = Buffer.from(await response.arrayBuffer());
-    writeFileSync(localPath, buffer);
-    return { success: true, localPath };
-  } catch (err) {
-    return { success: false, localPath, error: err instanceof Error ? err.message : String(err) };
-  }
+  return downloadImage({
+    url,
+    targetDir,
+    subdir: 'src/assets/blog',
+    urlTransform: sqspUrlTransform,
+    filenameTransform: sqspFilenameTransform,
+  });
 }
 
 export async function downloadAllCdnImages(manifest: Manifest, targetDir: string, dryRun: boolean): Promise<{ downloaded: number; skipped: number; failed: number; errors: string[] }> {
-  let downloaded = 0;
-  let skipped = 0;
-  let failed = 0;
-  const errors: string[] = [];
-
-  for (const img of manifest.extract.images) {
-    if (img.source !== 'remote') { skipped++; continue; }
-    if (dryRun) { skipped++; continue; }
-
-    const result = await downloadCdnImage(img.absolutePath, targetDir);
-    if (result.success) downloaded++;
-    else { failed++; if (result.error) errors.push(`${img.relativePath}: ${result.error}`); }
-  }
-
-  return { downloaded, skipped, failed, errors };
+  return downloadAllRemoteImages(manifest, targetDir, dryRun, 'src/assets/blog', sqspUrlTransform, sqspFilenameTransform);
 }
 
-// ── HTML to Markdown conversion ───────────────────────────────────────
-
-const turndown = new TurndownService({
-  headingStyle: 'atx',
-  codeBlockStyle: 'fenced',
-  bulletListMarker: '-',
-});
-
-turndown.addRule('sqsBlock', {
-  filter: (node) => {
-    if (node.nodeName === 'div') {
-      const cls = node.getAttribute('class') || '';
-      return cls.includes('sqs-block');
-    }
-    return false;
-  },
-  replacement: (_content, node) => {
-    return '\n' + turndown.turndown(node.innerHTML || '') + '\n';
-  },
-});
-
-turndown.addRule('inlineStyle', {
-  filter: (node) => {
-    return node.getAttribute && node.getAttribute('style') !== null;
-  },
-  replacement: (content, node) => {
-    if (node.nodeName === 'span' || node.nodeName === 'div') return content;
-    return content;
-  },
-});
+// ── HTML to Markdown conversion (delegates to block_parser) ────────────
 
 export function convertHtmlToMarkdown(html: string): string {
-  if (!html || !html.includes('<')) return html;
-  let cleaned = html
-    .replace(/<div\s+class="[^"]*sqs-block[^"]*"[^>]*>/g, '')
-    .replace(/<div\s+class="[^"]*sqs-block-html[^"]*"[^>]*>/g, '')
-    .replace(/<\/div>\s*<!--\s*end\s+sqs-block[^*]*-->/g, '')
-    .replace(/class="[^"]*sqs-[^"]*"/g, '')
-    .replace(/style="[^"]*"/g, '')
-    .replace(/data-[a-z-]+="[^"]*"/g, '');
-  return turndown.turndown(cleaned);
+  return sharedConvertHtmlToMarkdown(html, 'squarespace');
 }
 
 // ── Image extraction ────────────────────────────────────────────────────
@@ -384,10 +315,6 @@ function countMeta(items: WxrItem[]): { tags: number; authors: number } {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
-
-function checksumString(content: string): string {
-  return createHash('sha256').update(content).digest('hex').slice(0, 12);
-}
 
 // ── Squarespace frontmatter mapping ────────────────────────────────────
 

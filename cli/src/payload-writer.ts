@@ -21,6 +21,7 @@ import {
   type GhostExport, type GhostPost, type GhostTag, type GhostAuthor,
   readGhostExport,
 } from './ghost.js';
+import { downloadImage, downloadAllRemoteImages, ghostUrlTransform, ghostFilenameTransform } from './asset_handler.js';
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -381,33 +382,16 @@ export function generateSeedScript(ghostExport: GhostExport): string {
   return lines.join('\n');
 }
 
-// ── Ghost image download ────────────────────────────────────────────────
+// ── Ghost image download (delegates to asset_handler) ─────────────────
 
 export async function downloadGhostImage(url: string, mediaDir: string): Promise<{ success: boolean; localPath: string; error?: string }> {
-  // Strip Ghost size variants for original
-  const downloadUrl = url.replace(/\/size\/w\d+\//, '/content/images/');
-  const bareUrl = downloadUrl.replace(/\?format=\w+$/, '');
-  const filename = basename(new URL(bareUrl).pathname);
-  const localPath = resolve(mediaDir, filename);
-
-  if (existsSync(localPath)) {
-    return { success: true, localPath };
-  }
-
-  try {
-    mkdirSync(mediaDir, { recursive: true });
-
-    const response = await fetch(downloadUrl);
-    if (!response.ok) {
-      return { success: false, localPath, error: `HTTP ${response.status}: ${response.statusText}` };
-    }
-
-    const buffer = Buffer.from(await response.arrayBuffer());
-    writeFileSync(localPath, buffer);
-    return { success: true, localPath };
-  } catch (err) {
-    return { success: false, localPath, error: err instanceof Error ? err.message : String(err) };
-  }
+  return downloadImage({
+    url,
+    targetDir: resolve(mediaDir, '..'),
+    subdir: 'media',
+    urlTransform: ghostUrlTransform,
+    filenameTransform: ghostFilenameTransform,
+  });
 }
 
 export async function downloadAllGhostImages(
@@ -415,22 +399,7 @@ export async function downloadAllGhostImages(
   targetDir: string,
   dryRun: boolean
 ): Promise<{ downloaded: number; skipped: number; failed: number; errors: string[] }> {
-  let downloaded = 0;
-  let skipped = 0;
-  let failed = 0;
-  const errors: string[] = [];
-  const mediaDir = resolve(targetDir, 'media');
-
-  for (const img of manifest.extract.images) {
-    if (img.source !== 'remote') { skipped++; continue; }
-    if (dryRun) { skipped++; continue; }
-
-    const result = await downloadGhostImage(img.absolutePath, mediaDir);
-    if (result.success) downloaded++;
-    else { failed++; if (result.error) errors.push(`${img.relativePath}: ${result.error}`); }
-  }
-
-  return { downloaded, skipped, failed, errors };
+  return downloadAllRemoteImages(manifest, targetDir, dryRun, 'media', ghostUrlTransform, ghostFilenameTransform);
 }
 
 // ── Main write function ─────────────────────────────────────────────────

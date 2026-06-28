@@ -23,8 +23,8 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, basename } from 'node:path';
-import { createHash } from 'node:crypto';
 import type { Manifest, PluginMapping } from './manifest.js';
+import { checksumString } from './asset_handler.js';
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -441,7 +441,3 @@ export function readGhostExport(targetDir: string): GhostExport | null {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
-
-function checksumString(content: string): string {
-  return createHash('sha256').update(content).digest('hex').slice(0, 12);
-}

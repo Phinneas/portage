@@ -13,7 +13,8 @@ import { extractGhost, mapGhostFeaturesToAstro, writeGhostExport } from './ghost
 import { writePayloadSeed, downloadAllGhostImages } from './payload-writer.js';
 import { writeSanityOutput, downloadSqspImagesForSanity } from './sanity-writer.js';
 import { extractNext, transformNextContent, mapNextPluginsToAstro } from './next.js';
-import { generateHandoff, generateMigrationReport, writeMigrationReport } from './creatives.js';
+import { generateHandoff } from './creatives.js';
+import { generateMigrationReport, writeMigrationReport, writeMarkdownReport } from './report.js';
 import { transformContent, rewriteMdx, writeCollections, localizeAssets, writeRedirects, writeSquarespaceCollections, writeSubstackCollections } from './astro-writer.js';
 
 const program = new Command();
@@ -390,7 +391,9 @@ program.command('load')
           },
         );
         const reportPath = writeMigrationReport(report, targetDir);
+        const mdPath = writeMarkdownReport(report, targetDir);
         console.log(chalk.dim('  → ') + `Migration report: ${reportPath}`);
+        console.log(chalk.dim('  → ') + `Markdown report: ${mdPath}`);
 
         // Re-write manifest with handoff data
         writeManifest(manifest, targetDir);

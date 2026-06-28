@@ -27,8 +27,10 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { resolve, basename } from 'node:path';
 import type { Manifest } from './manifest.js';
 import { parseWxr, type WxrItem, type WxrChannelInfo, type WxrCategory, type WxrTag, wxrSlugify } from './wxr-parser.js';
-import { SQSP_CDN_BASE, readWxrItems } from './squarespace.js';
+import { readWxrItems } from './squarespace.js';
 import { coerceDate } from './frontmatter.js';
+import { htmlToPortableText, stripTags } from './block_parser.js';
+import { downloadAllRemoteImages, sqspUrlTransform, sqspFilenameTransform } from './asset_handler.js';
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -61,161 +63,10 @@ function makeSanityId(prefix: string, id: string | number, strategy: IdStrategy)
   return `${prefix}_${id}`;
 }
 
-// ── HTML → Portable Text conversion ────────────────────────────────────
+// ── HTML → Portable Text (imported from block_parser.ts) ──────────────
 
-/**
- * Converts HTML content to Sanity Portable Text blocks.
- *
- * For Squarespace, HTML is relatively clean (no shortcodes, no WP-specific
- * markup). We convert to simple block/span Portable Text. Complex HTML
- * (tables, embeds) falls through as HTML block type for manual review.
- */
-export function htmlToPortableText(html: string): unknown[] {
-  if (!html || !html.trim()) return [];
-
-  // Strip Squarespace-specific markup
-  const cleaned = html
-    .replace(/<div\s+class="[^"]*sqs-block[^"]*"[^>]*>/g, '')
-    .replace(/<\/div>\s*<!--\s*end\s+sqs-block[^*]*-->/g, '')
-    .replace(/class="[^"]*sqs-[^"]*"/g, '')
-    .replace(/data-[a-z-]+="[^"]*"/g, '');
-
-  const blocks: unknown[] = [];
-
-  // Split on block-level elements
-  const blockRe = /<(h[1-6]|p|blockquote|ul|ol|pre|hr)[^>]*>([\s\S]*?)<\/\1>/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = blockRe.exec(cleaned)) !== null) {
-    // Text before this block element
-    if (match.index > lastIndex) {
-      const between = cleaned.slice(lastIndex, match.index).trim();
-      if (between) {
-        blocks.push({
-          _type: 'block',
-          style: 'normal',
-          children: [{ _type: 'span', marks: [], text: stripTags(between) }],
-          markDefs: [],
-        });
-      }
-    }
-
-    const tag = match[1];
-    const content = match[2];
-
-    if (tag.match(/^h(\d)$/)) {
-      const level = parseInt(tag[1]);
-      const style = level === 1 ? 'h1' : level === 2 ? 'h2' : level === 3 ? 'h3' : level === 4 ? 'h4' : 'h5';
-      blocks.push({
-        _type: 'block',
-        style,
-        children: [{ _type: 'span', marks: [], text: stripTags(content) }],
-        markDefs: [],
-      });
-    } else if (tag === 'p') {
-      blocks.push({
-        _type: 'block',
-        style: 'normal',
-        children: parseInlineContent(content),
-        markDefs: [],
-      });
-    } else if (tag === 'blockquote') {
-      blocks.push({
-        _type: 'block',
-        style: 'blockquote',
-        children: [{ _type: 'span', marks: [], text: stripTags(content) }],
-        markDefs: [],
-      });
-    } else if (tag === 'ul' || tag === 'ol') {
-      const items = content.split(/<li[^>]*>/).filter((s) => s.trim());
-      for (const li of items) {
-        blocks.push({
-          _type: 'block',
-          style: 'normal',
-          listItem: tag === 'ol' ? 'number' : 'bullet',
-          children: parseInlineContent(li.replace(/<\/li>/g, '')),
-          markDefs: [],
-          level: 1,
-        });
-      }
-    } else if (tag === 'pre') {
-      blocks.push({
-        _type: 'code',
-        code: stripTags(content),
-        language: '',
-      });
-    }
-    // hr → skip
-
-    lastIndex = match.index + match[0].length;
-  }
-
-  // Remaining text after last block element
-  if (lastIndex < cleaned.length) {
-    const remainder = cleaned.slice(lastIndex).trim();
-    if (remainder) {
-      blocks.push({
-        _type: 'block',
-        style: 'normal',
-        children: [{ _type: 'span', marks: [], text: stripTags(remainder) }],
-        markDefs: [],
-      });
-    }
-  }
-
-  // Handle images not wrapped in block elements
-  const imgRe = /<img[^>]+src="([^"]+)"[^>]*(?:alt="([^"]*)")?[^>]*\/?>/g;
-  while ((match = imgRe.exec(cleaned)) !== null) {
-    const src = match[1];
-    const alt = match[2] || '';
-    if (src.includes(SQSP_CDN_BASE)) {
-      const filename = basename(new URL(src).pathname);
-      blocks.push({
-        _type: 'image',
-        _sanityAsset: `image@file:///assets/${filename}`,
-        alt,
-      });
-    }
-  }
-
-  return blocks;
-}
-
-function parseInlineContent(html: string): unknown[] {
-  const spans: unknown[] = [];
-  // Simple inline parsing: <strong>, <em>, <a>
-  const strongRe = /<strong>([^<]*)<\/strong>/g;
-  const emRe = /<em>([^<]*)<\/em>/g;
-  const linkRe = /<a\s+href="([^"]+)">([^<]*)<\/a>/g;
-
-  // Collect inline marks
-  const markRanges: Array<{ start: number; end: number; mark: string; markDef?: unknown }> = [];
-  let lm: RegExpExecArray | null;
-
-  while ((lm = strongRe.exec(html)) !== null) {
-    markRanges.push({ start: lm.index, end: lm.index + lm[0].length, mark: 'strong' });
-  }
-  while ((lm = emRe.exec(html)) !== null) {
-    markRanges.push({ start: lm.index, end: lm.index + lm[0].length, mark: 'em' });
-  }
-  while ((lm = linkRe.exec(html)) !== null) {
-    markRanges.push({
-      start: lm.index,
-      end: lm.index + lm[0].length,
-      mark: `link_${lm[1]}`,
-      markDef: { _type: 'link', href: lm[1] },
-    });
-  }
-
-  // Fallback: just strip tags and return as plain span
-  spans.push({ _type: 'span', marks: [], text: stripTags(html) });
-  return spans;
-}
-
-function stripTags(html: string): string {
-  return html.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim();
-}
+// Re-export for backward compatibility
+export { htmlToPortableText } from './block_parser.js';
 
 // ── Field Mapping: WXR → Sanity ─────────────────────────────────────────
 
@@ -685,44 +536,7 @@ export async function downloadSqspImagesForSanity(
   targetDir: string,
   dryRun: boolean,
 ): Promise<{ downloaded: number; skipped: number; failed: number; errors: string[] }> {
-  let downloaded = 0;
-  let skipped = 0;
-  let failed = 0;
-  const errors: string[] = [];
-  const assetsDir = resolve(targetDir, 'import', 'assets');
-
-  for (const img of manifest.extract.images) {
-    if (img.source !== 'remote') { skipped++; continue; }
-    if (dryRun) { skipped++; continue; }
-
-    const filename = basename(new URL(img.absolutePath).pathname);
-    const localPath = resolve(assetsDir, filename);
-
-    if (existsSync(localPath)) { downloaded++; continue; }
-
-    // Request at highest quality
-    const downloadUrl = img.absolutePath.includes('?format=')
-      ? img.absolutePath.replace(/\?format=\w+$/, '?format=2500w')
-      : img.absolutePath + '?format=2500w';
-
-    try {
-      mkdirSync(assetsDir, { recursive: true });
-      const response = await fetch(downloadUrl);
-      if (!response.ok) {
-        failed++;
-        errors.push(`${filename}: HTTP ${response.status}`);
-        continue;
-      }
-      const buffer = Buffer.from(await response.arrayBuffer());
-      writeFileSync(localPath, buffer);
-      downloaded++;
-    } catch (err) {
-      failed++;
-      errors.push(`${filename}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  return { downloaded, skipped, failed, errors };
+  return downloadAllRemoteImages(manifest, targetDir, dryRun, 'import/assets', sqspUrlTransform, sqspFilenameTransform);
 }
 
 // ── Feature Mapping ────────────────────────────────────────────────────
