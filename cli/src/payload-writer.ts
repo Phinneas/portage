@@ -189,7 +189,7 @@ export function mapGhostAuthorToPayload(
 
 // ── Collection configs ────────────────────────────────────────────────────
 
-export function generatePayloadConfig(): string {
+export function generatePayloadConfig(settings?: import('./ghost.js').GhostSettings): string {
   return `// @ts-check
 import { buildConfig } from 'payload';
 import { sqliteAdapter } from '@payloadcms/db-sqlite';
@@ -199,6 +199,7 @@ export default buildConfig({
     {
       slug: 'posts',
       fields: [
+        { name: 'ghostUuid', type: 'text', index: true },
         { name: 'title', type: 'text', required: true },
         { name: 'slug', type: 'text', required: true, unique: true },
         { name: 'content', type: 'richText' },
@@ -240,6 +241,7 @@ export default buildConfig({
     {
       slug: 'pages',
       fields: [
+        { name: 'ghostUuid', type: 'text', index: true },
         { name: 'title', type: 'text', required: true },
         { name: 'slug', type: 'text', required: true, unique: true },
         { name: 'content', type: 'richText' },
@@ -278,6 +280,29 @@ export default buildConfig({
       ],
     },
   ],
+  globals: [
+    {
+      slug: 'site-settings',
+      fields: [
+        { name: 'title', type: 'text', defaultValue: ${JSON.stringify(settings?.title || '')} },
+        { name: 'description', type: 'textarea', defaultValue: ${JSON.stringify(settings?.description || '')} },
+        { name: 'url', type: 'text', defaultValue: ${JSON.stringify(settings?.url || '')} },
+        { name: 'locale', type: 'text', defaultValue: ${JSON.stringify(settings?.locale || 'en')} },
+        { name: 'timezone', type: 'text', defaultValue: ${JSON.stringify(settings?.timezone || 'UTC')} },
+        { name: 'logo', type: 'upload', relationTo: 'media' },
+        { name: 'icon', type: 'upload', relationTo: 'media' },
+        {
+          name: 'navigation', type: 'array', fields: [
+            { name: 'label', type: 'text', required: true },
+            { name: 'url', type: 'text', required: true },
+          ],
+          defaultValue: ${JSON.stringify(settings?.navigation || [])},
+        },
+        { name: 'codeinjectionHead', type: 'textarea' },
+        { name: 'codeinjectionFoot', type: 'textarea' },
+      ],
+    },
+  ],
   db: sqliteAdapter({
     client: { url: process.env.DATABASE_URL || 'file:./portage-migration.db' },
   }),
@@ -294,6 +319,12 @@ export function generateSeedScript(ghostExport: GhostExport): string {
   lines.push(`import config from '@payload-config';`);
   lines.push(`import path from 'node:path';`);
   lines.push(`import { writeFileSync, mkdirSync } from 'node:fs';`);
+  if (ghostExport.settings.title || ghostExport.settings.description) {
+    lines.push(``);
+    lines.push(`// Source: ${ghostExport.settings.title || 'Ghost publication'}`);
+    if (ghostExport.settings.description) lines.push(`// ${ghostExport.settings.description}`);
+    if (ghostExport.settings.url) lines.push(`// URL: ${ghostExport.settings.url}`);
+  }
   lines.push(``);
   lines.push(`async function seed() {`);
   lines.push(`  const payload = await getPayload({ config });`);
@@ -377,6 +408,20 @@ export function generateSeedScript(ghostExport: GhostExport): string {
     }
   }
   lines.push(``);
+  // 5. Create site settings global
+  if (ghostExport.settings.title || ghostExport.settings.url) {
+    lines.push(`  // 5. Create site settings global`);
+    lines.push(`  await payload.updateGlobal({ slug: 'site-settings', data: ${JSON.stringify({
+      title: ghostExport.settings.title,
+      description: ghostExport.settings.description,
+      url: ghostExport.settings.url,
+      locale: ghostExport.settings.locale,
+      timezone: ghostExport.settings.timezone,
+      navigation: ghostExport.settings.navigation,
+    })}, overrideAccess: true });`);
+    lines.push(``);
+  }
+
   lines.push(`  console.log('Seed complete.', count, 'documents created.');`);
   lines.push(`}`);
   lines.push(``);
@@ -433,7 +478,7 @@ export function writePayloadSeed(
     writeFileSync(seedPath, seedScript, 'utf-8');
 
     // Generate and write payload config
-    const configScript = generatePayloadConfig();
+    const configScript = generatePayloadConfig(ghostExport.settings);
     const configPath = resolve(targetDir, 'src/payload.config.ts');
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(configPath, configScript, 'utf-8');

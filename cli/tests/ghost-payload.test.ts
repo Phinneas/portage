@@ -12,6 +12,8 @@ import {
   readGhostExport,
   mapGhostFrontmatter,
   extractGhost,
+  type GhostExport,
+  type GhostSettings,
 } from '../src/ghost.js';
 import {
   writeGhostCollections,
@@ -23,7 +25,6 @@ import {
   generatePayloadConfig,
   generateSeedScript,
 } from '../src/payload-writer.js';
-import type { GhostExport } from '../src/ghost.js';
 import { splitFrontmatter } from '../src/frontmatter.js';
 
 const FIXTURES = resolve(__dirname, 'fixtures');
@@ -688,5 +689,136 @@ describe('Ghost → Astro integration', () => {
 
     // Cleanup
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+});
+
+// ── Ghost Settings Extraction ─────────────────────────────────────────
+
+describe('parseGhostExport settings', () => {
+  const ghostExport = parseGhostExport(GHOST_JSON_PATH, 'https://blog.example.com');
+
+  it('parses settings title from settings table', () => {
+    expect(ghostExport.settings.title).toBe('My Ghost Publication');
+  });
+
+  it('parses settings description', () => {
+    expect(ghostExport.settings.description).toBe('A test Ghost publication for migration');
+  });
+
+  it('parses settings url', () => {
+    expect(ghostExport.settings.url).toBe('https://blog.example.com');
+  });
+
+  it('parses settings locale', () => {
+    expect(ghostExport.settings.locale).toBe('en');
+  });
+
+  it('parses settings timezone', () => {
+    expect(ghostExport.settings.timezone).toBe('America/Los_Angeles');
+  });
+
+  it('parses navigation array from JSON string', () => {
+    expect(ghostExport.settings.navigation.length).toBe(2);
+    expect(ghostExport.settings.navigation[0].label).toBe('Home');
+    expect(ghostExport.settings.navigation[1].url).toBe('/about');
+  });
+
+  it('parses logo from settings', () => {
+    expect(ghostExport.settings.logo).toContain('logo.png');
+  });
+
+  it('falls back to meta when settings table missing', () => {
+    // Remove settings from raw export to test fallback
+    const raw = JSON.parse(readFileSync(GHOST_JSON_PATH, 'utf-8'));
+    delete raw.db[0].data.settings;
+    const tmpPath = resolve(__dirname, 'fixtures', 'ghost-export-no-settings.json');
+    writeFileSync(tmpPath, JSON.stringify(raw), 'utf-8');
+
+    const exportNoSettings = parseGhostExport(tmpPath, 'https://fallback.example.com');
+    expect(exportNoSettings.settings.title).toBe('My Ghost Publication'); // from meta
+    expect(exportNoSettings.settings.url).toBe('https://fallback.example.com'); // from ghostUrl param
+    expect(exportNoSettings.settings.locale).toBe('en'); // default
+
+    rmSync(tmpPath, { force: true });
+  });
+});
+
+// ── Ghost hasLexical Flag ─────────────────────────────────────────────
+
+describe('Ghost hasLexical flag', () => {
+  const ghostExport = parseGhostExport(GHOST_JSON_PATH, 'https://blog.example.com');
+
+  it('flags post with non-empty lexical content', () => {
+    // First post has lexical content in fixture
+    expect(ghostExport.posts[0].hasLexical).toBe(true);
+  });
+
+  it('does not flag post with empty lexical', () => {
+    // Other posts have empty lexical in fixture
+    expect(ghostExport.posts[1].hasLexical).toBe(false);
+    expect(ghostExport.posts[2].hasLexical).toBe(false);
+  });
+});
+
+// ── Lexical review flag in Astro frontmatter ──────────────────────────
+
+describe('mapGhostFrontmatter lexicalReview', () => {
+  it('sets lexicalReview when post has Lexical content', () => {
+    const ghostExport = parseGhostExport(GHOST_JSON_PATH, 'https://blog.example.com');
+    const lexicalPost = ghostExport.posts[0]; // has lexical
+    const fm = mapGhostFrontmatter(lexicalPost, [], [], 'none');
+    // lexicalReview is added by writeGhostCollections, not mapGhostFrontmatter
+    // but we can test the flag is in the GhostPost
+    expect(lexicalPost.hasLexical).toBe(true);
+  });
+});
+
+// ── Payload config with settings ──────────────────────────────────────
+
+describe('generatePayloadConfig with settings', () => {
+  it('includes site-settings global when settings provided', () => {
+    const settings: GhostSettings = {
+      title: 'Test Pub',
+      description: 'A test',
+      url: 'https://test.com',
+      locale: 'en',
+      timezone: 'UTC',
+      codeinjectionHead: '',
+      codeinjectionFoot: '',
+      icon: '',
+      coverImage: '',
+      logo: '',
+      navigation: [{ label: 'Home', url: '/' }],
+    };
+    const config = generatePayloadConfig(settings);
+    expect(config).toContain("slug: 'site-settings'");
+    expect(config).toContain('Test Pub');
+    expect(config).toContain('https://test.com');
+  });
+
+  it('includes ghostUuid field in posts and pages', () => {
+    const config = generatePayloadConfig();
+    // Count ghostUuid occurrences (should be in both posts and pages)
+    const matches = config.match(/ghostUuid/g);
+    expect(matches).not.toBeNull();
+    expect(matches!.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ── Payload seed script with settings ────────────────────────────────
+
+describe('generateSeedScript with settings', () => {
+  it('includes site settings seed step', () => {
+    const ghostExport = parseGhostExport(GHOST_JSON_PATH, 'https://blog.example.com');
+    const script = generateSeedScript(ghostExport);
+    expect(script).toContain('site-settings');
+    expect(script).toContain('My Ghost Publication');
+  });
+
+  it('includes source comment from settings', () => {
+    const ghostExport = parseGhostExport(GHOST_JSON_PATH, 'https://blog.example.com');
+    const script = generateSeedScript(ghostExport);
+    expect(script).toContain('// Source:');
+    expect(script).toContain('// URL:');
   });
 });

@@ -401,6 +401,7 @@ export function writeSubstackCollections(manifest: Manifest, targetDir: string, 
 export interface GhostCollectionResult {
   written: number;
   skippedDrafts: number;
+  lexicalFlagged: number;
 }
 
 export function writeGhostCollections(
@@ -411,6 +412,7 @@ export function writeGhostCollections(
 ): GhostCollectionResult {
   let written = 0;
   let skippedDrafts = 0;
+  let lexicalFlagged = 0;
 
   const ghostExport = readGhostExport(targetDir);
   if (!ghostExport) {
@@ -443,6 +445,13 @@ export function writeGhostCollections(
     const authorNames = post.authorIds.map((id) => authorNameMap.get(id)).filter(Boolean) as string[];
 
     const astroFm = mapGhostFrontmatter(post, tagNames, authorNames, heroStrategy);
+
+    // Flag Lexical content for manual review (Astro uses HTML, not Lexical)
+    if (post.hasLexical) {
+      astroFm.lexicalReview = true;
+      lexicalFlagged++;
+    }
+
     const slug = post.slug;
     const collection = post.type === 'page' ? 'pages' : 'blog';
     const outDir = collection === 'pages' ? pagesDir : blogDir;
@@ -461,7 +470,7 @@ export function writeGhostCollections(
     writeAstroConfig(targetDir, manifest);
   }
 
-  return { written, skippedDrafts };
+  return { written, skippedDrafts, lexicalFlagged };
 }
 
 function rewriteImagePath(imagePath: string): string {
@@ -547,6 +556,19 @@ function writeAstroConfig(targetDir: string, manifest: Manifest): void {
   const hasMdx = manifest.extract.contentFiles.some((f) => f.format === 'mdx');
   const hasSitemap = manifest.extract.plugins.some((p) => p.gatsbyPlugin === 'gatsby-plugin-sitemap' || p.gatsbyPlugin === 'jekyll-sitemap');
 
+  // Read Ghost settings if available for site metadata
+  let siteUrl = 'https://example.com';
+  let siteTitle = '';
+  let siteDescription = '';
+  if (manifest.source.platform === 'ghost') {
+    const ghostExport = readGhostExport(targetDir);
+    if (ghostExport) {
+      if (ghostExport.settings.url) siteUrl = ghostExport.settings.url.replace(/\/$/, '');
+      siteTitle = ghostExport.settings.title;
+      siteDescription = ghostExport.settings.description;
+    }
+  }
+
   const integrations: string[] = [];
   const integrationImports: string[] = [];
   if (hasMdx) { integrationImports.push("import mdx from '@astrojs/mdx';"); integrations.push('mdx()'); }
@@ -557,7 +579,9 @@ import { defineConfig } from 'astro/config';
 ${integrationImports.join('\n')}
 
 export default defineConfig({
-  site: 'https://example.com',
+  site: '${siteUrl}',
+${siteTitle ? `  // Original site: ${siteTitle}` : ''}
+${siteDescription ? `  // Description: ${siteDescription}` : ''}
   output: 'static',
   trailingSlash: 'always',
   compressHTML: true,

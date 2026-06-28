@@ -195,6 +195,19 @@
           "facebook": "",
           "twitter": ""
         }
+      ],
+      "settings": [
+        { "key": "title", "value": "My Ghost Publication" },
+        { "key": "description", "value": "A test Ghost publication for migration" },
+        { "key": "url", "value": "https://blog.example.com" },
+        { "key": "locale", "value": "en" },
+        { "key": "timezone", "value": "America/Los_Angeles" },
+        { "key": "navigation", "value": "[{\"label\":\"Home\",\"url\":\"/\"},{\"label\":\"About\",\"url\":\"/about\"}]" },
+        { "key": "codeinjection_head", "value": "" },
+        { "key": "codeinjection_foot", "value": "" },
+        { "key": "icon", "value": "" },
+        { "key": "cover_image", "value": "" },
+        { "key": "logo", "value": "https://blog.example.com/content/images/logo.png" }
       ]
     }
   }]

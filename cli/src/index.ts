@@ -399,6 +399,15 @@ program.command('load')
             stage: 'load',
           });
         }
+        // Lexical content flagged for manual review when targeting Astro
+        if (collectionResult && 'lexicalFlagged' in collectionResult && (collectionResult as any).lexicalFlagged > 0) {
+          quarantined.push({
+            slug: `_lexical_${(collectionResult as any).lexicalFlagged}`,
+            title: `${(collectionResult as any).lexicalFlagged} post(s) with Lexical content`,
+            reason: 'Lexical editor content — HTML was used instead; review for content fidelity',
+            stage: 'transform',
+          });
+        }
 
         // Build redirect list from manifest
         const redirectsList: RedirectEntry[] = [];

@@ -61,6 +61,7 @@ export interface GhostPost {
   tagIds: string[];
   authorIds: string[];
   emailOnly: boolean;
+  hasLexical: boolean;
 }
 
 export interface GhostTag {
@@ -86,10 +87,25 @@ export interface GhostAuthor {
   twitter: string;
 }
 
+export interface GhostSettings {
+  title: string;
+  description: string;
+  url: string;
+  locale: string;
+  timezone: string;
+  codeinjectionHead: string;
+  codeinjectionFoot: string;
+  icon: string;
+  coverImage: string;
+  logo: string;
+  navigation: Array<{ label: string; url: string }>;
+}
+
 export interface GhostExport {
   posts: GhostPost[];
   tags: GhostTag[];
   authors: GhostAuthor[];
+  settings: GhostSettings;
   meta: {
     title: string;
     description: string;
@@ -274,15 +290,50 @@ export function parseGhostExport(filePath: string, ghostUrl?: string): GhostExpo
       tagIds,
       authorIds,
       emailOnly: String(p.email_only) === 'true' || String(p.status) === 'sent',
+      hasLexical: lexical.length > 0 && lexical !== '{}',
     };
 
     posts.push(post);
   }
 
+  // Parse settings table (Ghost exports include a settings key/value table)
+  const rawSettings: Array<{ key: string; value: string }> = data.settings || [];
+  const settingsMap = new Map<string, string>();
+  for (const s of rawSettings) {
+    settingsMap.set(String(s.key), String(s.value || ''));
+  }
+  // Parse navigation JSON if present
+  let navigation: Array<{ label: string; url: string }> = [];
+  const navJson = settingsMap.get('navigation') || '[]';
+  try {
+    const parsed = JSON.parse(navJson);
+    if (Array.isArray(parsed)) {
+      navigation = parsed.map((item: Record<string, unknown>) => ({
+        label: String(item.label || ''),
+        url: String(item.url || ''),
+      }));
+    }
+  } catch { /* malformed JSON, leave empty */ }
+
+  const settings: GhostSettings = {
+    title: settingsMap.get('title') || meta.title || '',
+    description: settingsMap.get('description') || meta.description || '',
+    url: settingsMap.get('url') || ghostBaseUrl || '',
+    locale: settingsMap.get('locale') || 'en',
+    timezone: settingsMap.get('timezone') || 'UTC',
+    codeinjectionHead: settingsMap.get('codeinjection_head') || '',
+    codeinjectionFoot: settingsMap.get('codeinjection_foot') || '',
+    icon: resolveGhostUrl(settingsMap.get('icon') || '', ghostBaseUrl),
+    coverImage: resolveGhostUrl(settingsMap.get('cover_image') || '', ghostBaseUrl),
+    logo: resolveGhostUrl(settingsMap.get('logo') || '', ghostBaseUrl),
+    navigation,
+  };
+
   return {
     posts,
     tags: Array.from(tagMap.values()),
     authors: Array.from(authorMap.values()),
+    settings,
     meta: {
       title: String(meta.title || ''),
       description: String(meta.description || ''),
