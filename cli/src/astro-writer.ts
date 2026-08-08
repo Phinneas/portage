@@ -19,6 +19,7 @@ import { mapNextFrontmatter, rewriteNextLink, rewriteNextImage, rewriteNextHead,
 import { mapGhostFrontmatter, readGhostExport } from './ghost.js';
 import { convertHtmlToMarkdown as convertGhostHtml } from './block_parser.js';
 import { checksumString } from './asset_handler.js';
+import type { MigrationItem } from './report.js';
 
 // ── MDX rewriting ─────────────────────────────────────────────────────
 
@@ -148,11 +149,12 @@ function setNestedKey(obj: Record<string, unknown>, key: string, value: unknown)
 
 // ── Collection writer ────────────────────────────────────────────────────
 
-export interface CollectionResult { written: number; skippedDrafts: number }
+export interface CollectionResult { written: number; skippedDrafts: number; items: MigrationItem[] }
 
 export function writeCollections(manifest: Manifest, targetDir: string, dryRun: boolean): CollectionResult {
   let written = 0;
   let skippedDrafts = 0;
+  const items: MigrationItem[] = [];
   const isJekyll = manifest.source.platform === 'jekyll';
   const isNext = manifest.source.platform === 'next';
 
@@ -186,6 +188,17 @@ export function writeCollections(manifest: Manifest, targetDir: string, dryRun: 
       }
 
       const slug = isJekyll ? deriveJekyllSlug(file.relativePath) : isNext ? deriveNextSlug(file.absolutePath, manifest.source.path) : deriveSlug(file.relativePath);
+
+      // Migration report item: one record per carried source URL
+      const itemCollection = file.collection === 'pages' ? 'pages' : file.collection === 'unknown' ? 'blog' : file.collection;
+      items.push({
+        sourceUrl: typeof fm.canonicalURL === 'string' ? fm.canonicalURL : null,
+        slug,
+        collection: itemCollection,
+        draft: fm.draft === true || fm.draft === 'true',
+        relativePath: file.relativePath,
+        checksum: file.checksum,
+      });
 
       // Determine output directory — Jekyll custom collections get their own dirs
       let outDir: string;
@@ -224,7 +237,7 @@ export function writeCollections(manifest: Manifest, targetDir: string, dryRun: 
     writeContentConfig(targetDir, manifest);
     writeAstroConfig(targetDir, manifest);
   }
-  return { written, skippedDrafts };
+  return { written, skippedDrafts, items };
 }
 
 function mapFrontmatter(fm: Record<string, unknown>, relativePath?: string): Record<string, unknown> {
@@ -579,7 +592,43 @@ function writeAstroConfig(targetDir: string, manifest: Manifest): void {
   const hasMdx = manifest.extract.contentFiles.some((f) => f.format === 'mdx');
   const hasSitemap = manifest.extract.plugins.some((p) => p.gatsbyPlugin === 'gatsby-plugin-sitemap' || p.gatsbyPlugin === 'jekyll-sitemap');
 
-  // Read site settings from platform sidecar
+  const { siteUrl, siteTitle, siteDescription } = resolveSiteSettings(manifest, targetDir);
+
+  const integrations: string[] = [];
+  const integrationImports: string[] = [];
+  if (hasMdx) { integrationImports.push("import mdx from '@astrojs/mdx';"); integrations.push('mdx()'); }
+  if (hasSitemap) { integrationImports.push("import sitemap from '@astrojs/sitemap';"); integrations.push('sitemap()'); }
+
+  const config = `// @ts-check
+import { defineConfig } from 'astro/config';
+${integrationImports.join('\n')}
+
+export default defineConfig({
+  site: '${siteUrl}',
+${siteTitle ? `  // Original site: ${siteTitle}` : ''}
+${siteDescription ? `  // Description: ${siteDescription}` : ''}
+  output: 'static',
+  trailingSlash: 'always',
+  compressHTML: true,
+${integrations.length > 0 ? `  integrations: [${integrations.join(', ')}],` : ''}
+});
+`;
+
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, config, 'utf-8');
+}
+
+// ── Site settings resolver ───────────────────────────────────────────────
+
+export interface SiteSettings { siteUrl: string; siteTitle: string; siteDescription: string }
+
+/**
+ * Resolves the site URL the way the Astro config writer does: source-side
+ * settings first (Ghost settings, Squarespace channel link, _config.yml url,
+ * Gatsby siteMetadata), falling back to the placeholder. Shared by the config
+ * writer and the migration report so destination_base_url / source URLs agree.
+ */
+export function resolveSiteSettings(manifest: Manifest, targetDir: string): SiteSettings {
   let siteUrl = 'https://example.com';
   let siteTitle = '';
   let siteDescription = '';
@@ -622,29 +671,11 @@ function writeAstroConfig(targetDir: string, manifest: Manifest): void {
       if (opts.siteUrl) siteUrl = String(opts.siteUrl).replace(/\/$/, '');
     }
   }
+  return { siteUrl, siteTitle, siteDescription };
+}
 
-  const integrations: string[] = [];
-  const integrationImports: string[] = [];
-  if (hasMdx) { integrationImports.push("import mdx from '@astrojs/mdx';"); integrations.push('mdx()'); }
-  if (hasSitemap) { integrationImports.push("import sitemap from '@astrojs/sitemap';"); integrations.push('sitemap()'); }
-
-  const config = `// @ts-check
-import { defineConfig } from 'astro/config';
-${integrationImports.join('\n')}
-
-export default defineConfig({
-  site: '${siteUrl}',
-${siteTitle ? `  // Original site: ${siteTitle}` : ''}
-${siteDescription ? `  // Description: ${siteDescription}` : ''}
-  output: 'static',
-  trailingSlash: 'always',
-  compressHTML: true,
-${integrations.length > 0 ? `  integrations: [${integrations.join(', ')}],` : ''}
-});
-`;
-
-  mkdirSync(dirname(configPath), { recursive: true });
-  writeFileSync(configPath, config, 'utf-8');
+export function resolveSiteUrl(manifest: Manifest, targetDir: string): string {
+  return resolveSiteSettings(manifest, targetDir).siteUrl;
 }
 
 // ── Asset localizer ─────────────────────────────────────────────────────

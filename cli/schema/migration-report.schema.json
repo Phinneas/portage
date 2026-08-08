@@ -1,0 +1,119 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://portage.dev/schemas/migration-report.schema.json",
+  "title": "Migration Report",
+  "description": "Open standard for migration-report.json — a tool-agnostic, per-URL record of a content migration. Produced by migration tools (e.g. Portage), ingested by auditors (e.g. LinkCanary) to verify migrated URLs resolve on the destination. See cli/docs/migration-report-schema.md (normative spec, v1.0).",
+  "type": "object",
+  "required": [
+    "version",
+    "generated_by",
+    "generated_at",
+    "destination_base_url",
+    "destination_platform",
+    "records"
+  ],
+  "properties": {
+    "version": {
+      "const": "1.0",
+      "description": "Schema version. MUST be \"1.0\" for this standard."
+    },
+    "generated_by": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Tool identifier and version, e.g. portage@0.9.2."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp of report generation."
+    },
+    "destination_base_url": {
+      "type": "string",
+      "pattern": "^https?://[^/]+(/[^/]+)*$",
+      "description": "Origin (plus optional path prefix) of the destination site. MUST NOT end with '/'. Consumers resolve every destination_path against this."
+    },
+    "destination_platform": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "Destination platform identifier (e.g. astro, payload, sanity, keystatic)."
+    },
+    "records": {
+      "type": "array",
+      "description": "One record per migrated source URL. May be empty.",
+      "items": {
+        "$ref": "#/definitions/record"
+      }
+    }
+  },
+  "additionalProperties": true,
+  "definitions": {
+    "record": {
+      "type": "object",
+      "required": [
+        "source_platform",
+        "source_url",
+        "destination_path",
+        "status",
+        "images_rehosted",
+        "links_rewritten"
+      ],
+      "properties": {
+        "source_platform": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "description": "Platform the content came from. Registered vocabulary: ghost, gatsby, squarespace, substack, jekyll, next, wordpress, webflow, contentful, storyblok, medium, notion, astro, custom."
+        },
+        "source_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Original absolute URL on the source site, normalized per spec §4.2. MUST be unique across records."
+        },
+        "destination_path": {
+          "type": ["string", "null"],
+          "pattern": "^/",
+          "description": "Absolute server-relative path where content landed. null when nothing was written. MUST start with '/'. MAY include a query string; MUST NOT include a fragment."
+        },
+        "status": {
+          "enum": ["migrated", "redirected", "quarantined", "failed", "excluded"],
+          "description": "Disposition of this URL after migration. Closed vocabulary: migrated = content carried to destination_path (expect 2xx); redirected = URL now points elsewhere (source 3xx -> 2xx); quarantined = held back pending decision (source should be 4xx/5xx); failed = migration errored, needs review; excluded = intentionally not migrated (source should be 4xx/5xx)."
+        },
+        "images_rehosted": {
+          "type": "boolean",
+          "description": "true when every image referenced by the item is served from the destination. Items with no images MUST be true (vacuously)."
+        },
+        "links_rewritten": {
+          "type": "boolean",
+          "description": "true when every internal link in the item points at the destination. Items with no internal links MUST be true (vacuously)."
+        },
+        "redirect_target": {
+          "type": "string",
+          "format": "uri",
+          "description": "Optional. Final absolute URL the source resolves to after all hops. Applies to status=redirected."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Optional. Human-readable cause for quarantined/failed/excluded records."
+        },
+        "checksum": {
+          "type": "string",
+          "description": "Optional. Content checksum recorded on extract (portage: sha256, 12 hex chars) for content-drift detection."
+        },
+        "asset_counts": {
+          "type": "object",
+          "description": "Optional. Counts behind the booleans. Contradictions (e.g. images_failed > 0 with images_rehosted: true) SHOULD be warned on by consumers.",
+          "properties": {
+            "images_total": { "type": "integer", "minimum": 0 },
+            "images_rehosted": { "type": "integer", "minimum": 0 },
+            "images_failed": { "type": "integer", "minimum": 0 },
+            "links_total": { "type": "integer", "minimum": 0 },
+            "links_rewritten": { "type": "integer", "minimum": 0 },
+            "links_failed": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true,
+      "description": "Unknown fields are permitted and MUST be ignored by consumers (forward-compatibility)."
+    }
+  }
+}

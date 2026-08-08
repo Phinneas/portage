@@ -2,21 +2,23 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { writeManifest, readManifest } from './manifest.js';
 import { extractGatsby, mapPluginsToAstro } from './gatsby.js';
 import { extractJekyll, transformJekyllContent, mapJekyllPluginsToAstro } from './jekyll.js';
-import { extractSquarespace, mapSquarespaceFeaturesToAstro, writeWxrItems as writeWxrItemsSidecar, downloadAllCdnImages } from './squarespace.js';
-import { extractSubstack, mapSubstackFeaturesToAstro, writeSubstackPosts, downloadAllCdnImages as downloadSubstackCdnImages } from './substack.js';
-import { extractGhost, mapGhostFeaturesToAstro, writeGhostExport } from './ghost.js';
+import { extractSquarespace, mapSquarespaceFeaturesToAstro, writeWxrItems as writeWxrItemsSidecar, downloadAllCdnImages, readWxrItems, deriveSlug as deriveSqSlug } from './squarespace.js';
+import { extractSubstack, mapSubstackFeaturesToAstro, writeSubstackPosts, downloadAllCdnImages as downloadSubstackCdnImages, readSubstackPosts } from './substack.js';
+import { extractGhost, mapGhostFeaturesToAstro, writeGhostExport, readGhostExport } from './ghost.js';
 import { writePayloadSeed, downloadAllGhostImages } from './payload-writer.js';
 import { writeSanityOutput, downloadSqspImagesForSanity } from './sanity-writer.js';
 import { extractNext, transformNextContent, mapNextPluginsToAstro } from './next.js';
 import { generateHandoff } from './creatives.js';
-import { generateMigrationReport, writeMigrationReport, writeMarkdownReport, stageStats } from './report.js';
-import type { ReportInput, ImageRehost, QuarantinedPost, RedirectEntry } from './report.js';
-import { transformContent, rewriteMdx, writeCollections, localizeAssets, writeRedirects, writeSquarespaceCollections, writeSubstackCollections, writeGhostCollections } from './astro-writer.js';
+import { generateMigrationReport, writeMigrationReport, writeMarkdownReport, buildMigrationRecords } from './report.js';
+import type { MigrationItem } from './report.js';
+import { auditRedirects, loadReport, writeAuditFiles } from './slug-audit.js';
+import type { RedirectFormat, RedirectRule } from './slug-audit.js';
+import { transformContent, rewriteMdx, writeCollections, localizeAssets, writeRedirects, writeSquarespaceCollections, writeSubstackCollections, writeGhostCollections, resolveSiteUrl } from './astro-writer.js';
 
 const program = new Command();
 
@@ -258,6 +260,7 @@ program.command('load')
   .option('--payload-url <url>', 'Payload REST API base URL (rest method)', 'http://localhost:3000')
   .option('--ghost-url <url>', 'Ghost site URL for resolving __GHOST_URL__ placeholders')
   .option('--hero <strategy>', 'Squarespace hero derivation (first-image, none)', 'first-image')
+  .option('--base-url <url>', 'Destination site base URL for the migration report (overrides the astro.config site value)')
   .option('--dry-run', 'Plan and diff only; write nothing', false)
   .action(async (opts) => {
     const spinner = ora('Loading content into Astro project...').start();
@@ -278,6 +281,10 @@ program.command('load')
       let cdnResult: import('./asset_handler.js').BatchDownloadResult | undefined;
       let payloadResult: { written: number; skippedDrafts: number; mediaDir: string } | undefined;
       let sanityWriteResult: { documentsWritten: number; assetsDownloaded: number; schemaTypes: number; outputPath: string } | undefined;
+
+      // Source site origin (from source config) — used by the collection writer
+      // and the migration report for deriving source URLs.
+      const sourceSiteUrl = resolveSiteUrl(manifest, targetDir);
 
       if (manifest.source.platform === 'squarespace') {
         const sqspTarget = opts.target || 'astro';
@@ -367,102 +374,69 @@ program.command('load')
         console.log(chalk.cyan('  ⚡ ') + handoff.message);
       }
 
-      // ── Migration report ──────────────────────────────────────────────
+      // ── Migration report (Migration Report Schema v1.0) ───────────────
+      // One record per carried source URL; LinkCanary ingests this file to
+      // verify that migrated URLs resolve on the destination site.
       if (!opts.dryRun) {
-        const totalContent = manifest.extract.counts.posts + manifest.extract.counts.pages;
-        const loadPassed = totalContent - manifest.load.skippedDrafts;
-
-        // Build image rehost details from CDN download results
-        const imageDetails: ImageRehost[] = (cdnResult?.details || []).map((d) => ({
-          originalUrl: d.originalUrl,
-          localPath: d.localPath,
-          status: d.status,
-          error: d.error,
-        }));
-
-        // Build quarantined posts list
-        const quarantined: QuarantinedPost[] = [];
-        // Drafts are quarantined at load stage
-        if (collectionResult?.skippedDrafts) {
-          quarantined.push({
-            slug: `_drafts_${collectionResult.skippedDrafts}`,
-            title: `${collectionResult.skippedDrafts} draft(s) excluded`,
-            reason: 'Draft status — excluded from published output',
-            stage: 'load',
-          });
-        }
-        if (payloadResult?.skippedDrafts) {
-          quarantined.push({
-            slug: `_drafts_${payloadResult.skippedDrafts}`,
-            title: `${payloadResult.skippedDrafts} draft(s) excluded`,
-            reason: 'Draft status — excluded from seed script',
-            stage: 'load',
-          });
-        }
-        // Lexical content flagged for manual review when targeting Astro
-        if (collectionResult && 'lexicalFlagged' in collectionResult && (collectionResult as any).lexicalFlagged > 0) {
-          quarantined.push({
-            slug: `_lexical_${(collectionResult as any).lexicalFlagged}`,
-            title: `${(collectionResult as any).lexicalFlagged} post(s) with Lexical content`,
-            reason: 'Lexical editor content — HTML was used instead; review for content fidelity',
-            stage: 'transform',
-          });
+        // Per-item data: export platforms (which record real source URLs) are
+        // read from their sidecars; filesystem platforms get items from the
+        // collection writer (which saw each file's frontmatter).
+        let items: MigrationItem[] = [];
+        if (manifest.source.platform === 'squarespace') {
+          const wxr = readWxrItems(targetDir);
+          items = (wxr?.items ?? []).map((item) => ({
+            sourceUrl: item.link && item.link.startsWith('http') ? item.link : null,
+            slug: deriveSqSlug(item),
+            collection: item.postType === 'page' ? 'pages' : 'blog',
+            draft: item.status === 'draft',
+            contentHtml: item.content,
+          }));
+        } else if (manifest.source.platform === 'substack') {
+          items = readSubstackPosts(targetDir).map((post) => ({
+            sourceUrl: post.url.startsWith('http') ? post.url : null,
+            slug: post.slug,
+            collection: post.type === 'page' ? 'pages' : post.type === 'podcast' ? 'podcast' : post.type === 'thread' ? 'threads' : 'blog',
+            draft: !post.isPublished,
+            contentHtml: post.html,
+          }));
+        } else if (manifest.source.platform === 'ghost') {
+          const ghostExport = readGhostExport(targetDir);
+          const ghostBase = ghostExport?.settings.url?.replace(/\/$/, '') ?? '';
+          items = (ghostExport?.posts ?? []).map((p) => ({
+            sourceUrl: p.canonicalUrl && p.canonicalUrl.startsWith('http')
+              ? p.canonicalUrl
+              : `${ghostBase}/${p.slug}/`,
+            slug: p.slug,
+            collection: p.type === 'page' ? 'pages' : 'blog',
+            draft: p.status === 'draft' || p.status === 'scheduled',
+            contentHtml: p.html,
+            lexical: p.hasLexical,
+          }));
+        } else {
+          items = (collectionResult as any)?.items ?? [];
         }
 
-        // Build redirect list from manifest
-        const redirectsList: RedirectEntry[] = [];
-        if (manifest.load.redirects > 0) {
-          // Read the redirect file if it was written
-          const redirectsPath = resolve(targetDir, 'public/_redirects');
-          try {
-            const { readFileSync } = await import('node:fs');
-            const redirectContent = readFileSync(redirectsPath, 'utf-8');
-            for (const line of redirectContent.split('\n')) {
-              const trimmed = line.trim();
-              if (!trimmed || trimmed.startsWith('#')) continue;
-              const [source, target] = trimmed.split(/\s+/);
-              if (source && target) {
-                redirectsList.push({ source, target, statusCode: 301, type: '301' });
-              }
-            }
-          } catch {
-            // Redirects file not found or unreadable; list stays empty
-          }
-        }
-
-        const reportInput: ReportInput = {
+        const failedImageUrls = new Set(
+          (cdnResult?.details ?? []).filter((d) => d.status === 'failed').map((d) => d.originalUrl),
+        );
+        const records = buildMigrationRecords(items, {
           sourcePlatform: manifest.source.platform,
-          destinationPlatform,
-          method: opts.method || 'seed',
-          counts: {
-            posts: manifest.extract.counts.posts,
-            pages: manifest.extract.counts.pages,
-            tags: manifest.extract.counts.tags,
-            authors: manifest.extract.counts.authors,
-            images: manifest.extract.counts.images,
-            redirects: manifest.load.redirects,
-            skippedDrafts: manifest.load.skippedDrafts,
-          },
-          stages: {
-            extract: stageStats(totalContent, totalContent),
-            transform: stageStats(totalContent, totalContent),
-            load: stageStats(totalContent, loadPassed),
-          },
-          imageDetails,
-          quarantined,
-          redirectsList,
-          output: {
-            seedScript: payloadResult ? 'src/seed.ts' : undefined,
-            config: payloadResult ? 'src/payload.config.ts' : sanityWriteResult ? 'sanity-schema.ts' : undefined,
-            mediaDir: payloadResult?.mediaDir,
-            envFile: payloadResult || sanityWriteResult ? '.env' : undefined,
-          },
-        };
+          sourceSiteUrl,
+          failedImageUrls,
+        });
 
-        const report = generateMigrationReport(reportInput);
+        // Destination base URL: --base-url > astro.config site > placeholder
+        let destinationBaseUrl = opts.baseUrl || readAstroSiteUrl(targetDir) || 'https://example.com';
+        destinationBaseUrl = destinationBaseUrl.replace(/\/+$/, '');
+
+        const report = generateMigrationReport({
+          destinationBaseUrl,
+          destinationPlatform,
+          records,
+        });
         const reportPath = writeMigrationReport(report, targetDir);
         const mdPath = writeMarkdownReport(report, targetDir);
-        console.log(chalk.dim('  → ') + `Migration report: ${reportPath}`);
+        console.log(chalk.dim('  → ') + `Migration report: ${reportPath} (${records.length} records)`);
         console.log(chalk.dim('  → ') + `Markdown report: ${mdPath}`);
 
         // Re-write manifest with handoff data
@@ -474,5 +448,89 @@ program.command('load')
       process.exit(1);
     }
   });
+
+// ── slug-audit ────────────────────────────────────────────────────────────
+
+const ALL_FORMATS: RedirectFormat[] = ['nginx', 'caddy', 'netlify', 'cloudflare'];
+
+function parseFormats(value: string): RedirectFormat[] {
+  const parts = value.split(',').map((p) => p.trim().toLowerCase());
+  if (parts.includes('all')) return ALL_FORMATS;
+  const formats = parts.filter((p): p is RedirectFormat => (ALL_FORMATS as string[]).includes(p));
+  return formats.length > 0 ? formats : ALL_FORMATS;
+}
+
+function printRules(rules: RedirectRule[]): void {
+  for (const r of rules) {
+    if (r.status === 410) {
+      console.log(chalk.dim('  → ') + `${r.source}  ${chalk.red('410 Gone')}`);
+    } else {
+      console.log(chalk.dim('  → ') + `${r.source}  ${chalk.cyan('301 →')}  ${r.target}`);
+    }
+  }
+}
+
+program.command('slug-audit')
+  .description('Compare pre/post migration slugs and generate redirect rules from a migration-report.json')
+  .option('--report <path>', 'Path to migration-report.json', 'migration-report.json')
+  .option('--format <formats>', 'Output formats: nginx, caddy, netlify, cloudflare, all', 'all')
+  .option('--out <dir>', 'Output directory', '.')
+  .option('--gone', 'Emit 410 Gone rules for excluded/quarantined records', false)
+  .option('--dry-run', 'Print the rules instead of writing files', false)
+  .action((opts) => {
+    try {
+      const reportPath = resolve(opts.report);
+      if (!existsSync(reportPath)) {
+        console.error(chalk.red(`✗ No migration report found at ${reportPath}`));
+        console.error(chalk.red('  Run `portage load` first, or pass --report <path>.'));
+        process.exit(1);
+      }
+
+      const report = loadReport(reportPath);
+      const rules = auditRedirects(report, { gone: opts.gone });
+      const formats = parseFormats(opts.format);
+
+      console.log('');
+      console.log(chalk.dim('  → ') + `${report.records.length} records in ${chalk.cyan(opts.report)}`);
+      console.log(chalk.dim('  → ') + `${rules.length} redirect rules${opts.gone ? ' (including 410 Gone)' : ''}`);
+      console.log('');
+
+      if (opts.dryRun) {
+        printRules(rules);
+        console.log('');
+        console.log(chalk.yellow('Dry run — nothing written'));
+        return;
+      }
+
+      if (rules.length === 0) {
+        console.log(chalk.yellow('No redirect rules to write — every migrated URL kept its path.'));
+        return;
+      }
+
+      const files = writeAuditFiles(rules, resolve(opts.out), formats);
+      for (const file of files) {
+        console.log(chalk.dim('  → ') + `${file.format.padEnd(10)} ${file.path}`);
+      }
+      console.log('');
+      console.log(chalk.green(`Wrote ${files.length} redirect file(s) to ${chalk.cyan(opts.out)}`));
+    } catch (err) {
+      console.error(chalk.red('slug-audit failed'));
+      console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+      process.exit(1);
+    }
+  });
+
+/** Reads the site URL from a written astro.config.mjs, if present. */
+function readAstroSiteUrl(targetDir: string): string | null {
+  const configPath = resolve(targetDir, 'astro.config.mjs');
+  if (!existsSync(configPath)) return null;
+  try {
+    const content = readFileSync(configPath, 'utf-8');
+    const match = content.match(/site:\s*['"]([^'"]+)['"]/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
 
 program.parse();

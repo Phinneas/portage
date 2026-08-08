@@ -5,184 +5,180 @@
  * JSON report: migration-report.json (machine-readable, LinkCanary-compatible)
  * Markdown report: migration-report.md (human-readable)
  *
- * LinkCanary-compatible schema: URL-level detail for redirect auditing,
- * per-stage pass/fail rates, quarantined posts, and image rehost tracking.
+ * The migration-report.json output shape is defined by the open
+ * Migration Report Schema v1.0 — see cli/docs/migration-report-schema.md
+ * (normative spec) and cli/schema/migration-report.schema.json (machine schema).
+ *
+ * Core contract: one record per migrated source URL with the six required
+ * fields (source_platform, source_url, destination_path, status,
+ * images_rehosted, links_rewritten). Auditors (LinkCanary) ingest the file to
+ * verify that migrated URLs resolve on the destination site.
  */
 
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { generateHandoff } from './creatives.js';
+import { z } from 'zod';
 
-// ── Types ───────────────────────────────────────────────────────────────
+// ── Schema version ────────────────────────────────────────────────────────
 
-/** Per-stage extraction counts and pass rates */
-export interface StageStats {
-  total: number;
-  passed: number;
-  failed: number;
-  passRate: number; // 0-1
+export const REPORT_SCHEMA_VERSION = '1.0' as const;
+export const REPORT_GENERATED_BY = 'portage@0.1.0'; // keep in sync with package.json
+
+// ── Zod schema (mirror of cli/schema/migration-report.schema.json) ────────
+
+const platformId = z.string().regex(/^[a-z0-9-]+$/, 'platform identifiers are [a-z0-9-]');
+const absoluteUrl = z.string().url('must be an absolute URL');
+const absolutePath = z.string().startsWith('/').nullable();
+
+export const MigrationRecordSchema = z
+  .object({
+    source_platform: platformId,
+    source_url: absoluteUrl,
+    destination_path: absolutePath,
+    status: z.enum(['migrated', 'redirected', 'quarantined', 'failed', 'excluded']),
+    images_rehosted: z.boolean(),
+    links_rewritten: z.boolean(),
+    // Optional extension fields (consumers MUST ignore unknown fields)
+    redirect_target: absoluteUrl.optional(),
+    reason: z.string().optional(),
+    checksum: z.string().optional(),
+    asset_counts: z
+      .object({
+        images_total: z.number().int().min(0).optional(),
+        images_rehosted: z.number().int().min(0).optional(),
+        images_failed: z.number().int().min(0).optional(),
+        links_total: z.number().int().min(0).optional(),
+        links_rewritten: z.number().int().min(0).optional(),
+        links_failed: z.number().int().min(0).optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+
+export const MigrationReportSchema = z
+  .object({
+    version: z.literal(REPORT_SCHEMA_VERSION),
+    generated_by: z.string().min(1),
+    generated_at: z.string().datetime({ offset: true }),
+    destination_base_url: z.string().regex(/^https?:\/\/[^/]+(\/[^/]+)*$/),
+    destination_platform: platformId,
+    records: z.array(MigrationRecordSchema),
+  })
+  .passthrough();
+
+export type MigrationStatus = 'migrated' | 'redirected' | 'quarantined' | 'failed' | 'excluded';
+export type MigrationRecord = z.infer<typeof MigrationRecordSchema>;
+export type MigrationReport = z.infer<typeof MigrationReportSchema>;
+
+/** Validates a report against the v1.0 standard; throws on the first violation. */
+export function validateMigrationReport(report: MigrationReport): void {
+  MigrationReportSchema.parse(report);
 }
 
-/** A post that was quarantined (excluded from output) with reason */
-export interface QuarantinedPost {
+// ── Per-item migration data (produced by the pipeline) ────────────────────
+
+/**
+ * One content item as it exists at load time. Converted to a spec record by
+ * buildMigrationRecords(). sourceUrl is the item's URL on the source site;
+ * where the platform does not record one, buildMigrationRecords() derives it
+ * from sourceSiteUrl + the item path.
+ */
+export interface MigrationItem {
+  sourceUrl: string | null;
   slug: string;
-  title: string;
-  originalUrl?: string;
-  reason: string;
-  stage: 'extract' | 'transform' | 'load';
+  collection: string; // blog | pages | podcast | threads | custom collection
+  draft: boolean;
+  /** Present for filesystem platforms; used to correlate transform rewrites. */
+  relativePath?: string;
+  /** Raw body HTML for export platforms; used to detect un-rehosted images. */
+  contentHtml?: string;
+  checksum?: string;
+  /** Ghost posts whose body was Lexical (HTML fallback used) → quarantined. */
+  lexical?: boolean;
 }
 
-/** Per-image rehost status */
-export interface ImageRehost {
-  originalUrl: string;
-  localPath: string;
-  status: 'downloaded' | 'skipped' | 'failed';
-  error?: string;
+export interface ReportBuildContext {
+  sourcePlatform: string;
+  /** Source site origin (from source config) for deriving source URLs. */
+  sourceSiteUrl: string;
+  /** Absolute URLs of CDN images that failed to download during load. */
+  failedImageUrls: Set<string>;
 }
 
-/** URL-level redirect entry (LinkCanary-compatible) */
-export interface RedirectEntry {
-  source: string;
-  target: string;
-  statusCode: number;
-  type: '301' | '302' | 'meta' | 'none';
+function referencesFailedImage(contentHtml: string, failedImageUrls: Set<string>): boolean {
+  if (failedImageUrls.size === 0) return false;
+  for (const url of failedImageUrls) {
+    if (contentHtml.includes(url)) return true;
+  }
+  return false;
 }
 
-export interface MigrationReport {
-  version: '2';
-  schema: 'linkcanary';
-  source: {
-    platform: string;
-    exportFile?: string;
-    url?: string;
-  };
-  destination: {
-    platform: string;
-    method: string;
-    url?: string;
-  };
-  stages: {
-    extract: StageStats;
-    transform: StageStats;
-    load: StageStats;
-  };
-  summary: {
-    posts: number;
-    pages: number;
-    tags: number;
-    authors: number;
-    images: number;
-    redirects: number;
-    skippedDrafts: number;
-  };
-  images: {
-    total: number;
-    rehosted: number;
-    failed: number;
-    skipped: number;
-    details: ImageRehost[];
-  };
-  quarantined: QuarantinedPost[];
-  redirectsList: RedirectEntry[];
-  output: {
-    seedScript?: string;
-    config?: string;
-    mediaDir?: string;
-    envFile?: string;
-  };
-  handoff: {
-    templateSlug: string | null;
-    templateName: string | null;
-    templateUrl: string | null;
-    pricing: 'free' | 'paid' | null;
-  };
-  completedAt: string;
-}
+/**
+ * Converts per-item pipeline data into spec records (§4 of the schema spec).
+ *
+ * Fidelity notes (documented best-effort):
+ * - `links_rewritten`: the pipeline records rewrites it *performs*, not links it
+ *   fails to rewrite, so every carried item is reported true (vacuous-true when
+ *   no links were detected). Future link-audit data can flip this to false.
+ * - `images_rehosted`: false only when the item's raw body references an image
+ *   URL that failed to download during load (export platforms). Filesystem
+ *   platforms have no per-item image provenance, so they report vacuous true.
+ */
+export function buildMigrationRecords(items: MigrationItem[], ctx: ReportBuildContext): MigrationRecord[] {
+  return items.map((item) => {
+    const collection = item.collection || 'blog';
+    const slug = item.slug || 'untitled';
+    const path = `/${collection}/${slug}/`;
 
-/** Build a StageStats from counts */
-export function stageStats(total: number, passed: number): StageStats {
-  const failed = total - passed;
-  return {
-    total,
-    passed,
-    failed,
-    passRate: total > 0 ? Math.round((passed / total) * 1000) / 1000 : 1,
-  };
+    let sourceUrl = item.sourceUrl;
+    if (!sourceUrl) {
+      // Filesystem platforms: the old site served the item at the same path
+      // convention it now serves at the destination (same-path migration).
+      sourceUrl = `${ctx.sourceSiteUrl}${path}`;
+    }
+
+    let status: MigrationStatus = 'migrated';
+    if (item.lexical) status = 'quarantined';
+    else if (item.draft) status = 'excluded';
+
+    const imagesRehosted = item.contentHtml ? !referencesFailedImage(item.contentHtml, ctx.failedImageUrls) : true;
+
+    const record: MigrationRecord = {
+      source_platform: ctx.sourcePlatform,
+      source_url: sourceUrl,
+      destination_path: path,
+      status,
+      images_rehosted: imagesRehosted,
+      links_rewritten: true, // see fidelity note above
+    };
+    if (item.checksum) record.checksum = item.checksum;
+    if (status !== 'migrated') {
+      record.reason = item.lexical
+        ? 'Lexical editor content — HTML fallback used; review for content fidelity'
+        : 'Draft status — excluded from published output';
+    }
+    return record;
+  });
 }
 
 // ── JSON Report Generation ────────────────────────────────────────────────
 
 export interface ReportInput {
-  sourcePlatform: string;
+  destinationBaseUrl: string;
   destinationPlatform: string;
-  method: string;
-  counts: {
-    posts: number;
-    pages: number;
-    tags: number;
-    authors: number;
-    images: number;
-    redirects: number;
-    skippedDrafts: number;
-  };
-  stages: {
-    extract: StageStats;
-    transform: StageStats;
-    load: StageStats;
-  };
-  imageDetails: ImageRehost[];
-  quarantined: QuarantinedPost[];
-  redirectsList: RedirectEntry[];
-  output: {
-    seedScript?: string;
-    config?: string;
-    mediaDir?: string;
-    envFile?: string;
-  };
-  exportFile?: string;
-  sourceUrl?: string;
-  destinationUrl?: string;
+  records: MigrationRecord[];
+  generatedBy?: string;
 }
 
 export function generateMigrationReport(input: ReportInput): MigrationReport {
-  const handoff = generateHandoff(input.sourcePlatform, input.destinationPlatform);
-
-  const rehosted = input.imageDetails.filter((i) => i.status === 'downloaded').length;
-  const failed = input.imageDetails.filter((i) => i.status === 'failed').length;
-  const skipped = input.imageDetails.filter((i) => i.status === 'skipped').length;
-
   return {
-    version: '2',
-    schema: 'linkcanary',
-    source: {
-      platform: input.sourcePlatform,
-      exportFile: input.exportFile,
-      url: input.sourceUrl,
-    },
-    destination: {
-      platform: input.destinationPlatform,
-      method: input.method,
-      url: input.destinationUrl,
-    },
-    stages: input.stages,
-    summary: input.counts,
-    images: {
-      total: input.imageDetails.length,
-      rehosted,
-      failed,
-      skipped,
-      details: input.imageDetails,
-    },
-    quarantined: input.quarantined,
-    redirectsList: input.redirectsList,
-    output: input.output,
-    handoff: {
-      templateSlug: handoff.template?.slug || null,
-      templateName: handoff.template?.name || null,
-      templateUrl: handoff.template?.url || null,
-      pricing: handoff.template?.pricing || null,
-    },
-    completedAt: new Date().toISOString(),
+    version: REPORT_SCHEMA_VERSION,
+    generated_by: input.generatedBy ?? REPORT_GENERATED_BY,
+    generated_at: new Date().toISOString(),
+    destination_base_url: input.destinationBaseUrl,
+    destination_platform: input.destinationPlatform,
+    records: input.records,
   };
 }
 
@@ -191,202 +187,93 @@ export function generateMigrationReport(input: ReportInput): MigrationReport {
 export function generateMarkdownReport(report: MigrationReport): string {
   const lines: string[] = [];
 
+  const sourcePlatform = report.records[0]?.source_platform ?? 'unknown';
+  const statusCounts = new Map<MigrationStatus, number>();
+  const notRewritten = new Map<string, number>();
+  const notRehosted = new Map<string, number>();
+
+  for (const r of report.records) {
+    statusCounts.set(r.status, (statusCounts.get(r.status) ?? 0) + 1);
+    if (!r.images_rehosted) notRehosted.set(r.source_url, 1);
+    if (!r.links_rewritten) notRewritten.set(r.source_url, 1);
+  }
+
   lines.push(`# Migration Report`);
   lines.push('');
-  lines.push(`**Route:** ${report.source.platform} → ${report.destination.platform}`);
-  lines.push(`**Method:** ${report.destination.method}`);
-  lines.push(`**Completed:** ${report.completedAt}`);
+  lines.push(`**Route:** ${sourcePlatform} → ${report.destination_platform}`);
+  lines.push(`**Destination base URL:** ${report.destination_base_url}`);
+  lines.push(`**Generated:** ${report.generated_at} by ${report.generated_by}`);
+  lines.push(`**Schema:** migration-report v${report.version}`);
   lines.push('');
 
-  // Per-stage pass rates
-  lines.push(`## Pass Rates`);
+  lines.push(`## Status Summary (${report.records.length} records)`);
   lines.push('');
-  lines.push(`| Stage | Total | Passed | Failed | Pass Rate |`);
-  lines.push(`|-------|-------|--------|--------|-----------|`);
-  for (const [name, stats] of Object.entries(report.stages)) {
-    const pct = (stats.passRate * 100).toFixed(1) + '%';
-    lines.push(`| ${name} | ${stats.total} | ${stats.passed} | ${stats.failed} | ${pct} |`);
-  }
-  lines.push('');
-
-  // Summary counts
-  lines.push(`## Summary`);
-  lines.push('');
-  lines.push(`| Metric | Count |`);
+  lines.push(`| Status | Count |`);
   lines.push(`|--------|-------|`);
-  lines.push(`| Posts | ${report.summary.posts} |`);
-  lines.push(`| Pages | ${report.summary.pages} |`);
-  lines.push(`| Tags | ${report.summary.tags} |`);
-  lines.push(`| Authors | ${report.summary.authors} |`);
-  lines.push(`| Images | ${report.images.total} |`);
-  lines.push(`| Images rehosted | ${report.images.rehosted} |`);
-  if (report.images.failed > 0) {
-    lines.push(`| Images failed | ${report.images.failed} |`);
-  }
-  if (report.images.skipped > 0) {
-    lines.push(`| Images skipped | ${report.images.skipped} |`);
-  }
-  lines.push(`| Redirects | ${report.summary.redirects} |`);
-  if (report.summary.skippedDrafts > 0) {
-    lines.push(`| Skipped drafts | ${report.summary.skippedDrafts} |`);
+  for (const status of ['migrated', 'redirected', 'quarantined', 'failed', 'excluded'] as MigrationStatus[]) {
+    const count = statusCounts.get(status) ?? 0;
+    lines.push(`| ${status} | ${count} |`);
   }
   lines.push('');
 
-  // Quarantined posts
-  if (report.quarantined.length > 0) {
-    lines.push(`## Quarantined Posts (${report.quarantined.length})`);
+  if (notRehosted.size > 0) {
+    lines.push(`## Images not rehosted (${notRehosted.size})`);
     lines.push('');
-    lines.push(`| Slug | Title | Stage | Reason |`);
-    lines.push(`|------|-------|-------|--------|`);
-    for (const q of report.quarantined) {
-      lines.push(`| ${q.slug} | ${q.title} | ${q.stage} | ${q.reason} |`);
+    lines.push(`| Source URL |`);
+    lines.push(`|-----------|`);
+    for (const url of notRehosted.keys()) lines.push(`| ${url} |`);
+    lines.push('');
+  }
+
+  if (notRewritten.size > 0) {
+    lines.push(`## Links not rewritten (${notRewritten.size})`);
+    lines.push('');
+    lines.push(`| Source URL |`);
+    lines.push(`|-----------|`);
+    for (const url of notRewritten.keys()) lines.push(`| ${url} |`);
+    lines.push('');
+  }
+
+  const quarantined = report.records.filter((r) => r.status === 'quarantined' || r.status === 'failed');
+  if (quarantined.length > 0) {
+    lines.push(`## Needs Review (${quarantined.length})`);
+    lines.push('');
+    lines.push(`| Status | Source URL | Reason |`);
+    lines.push(`|--------|-----------|--------|`);
+    for (const r of quarantined) lines.push(`| ${r.status} | ${r.source_url} | ${r.reason || '—'} |`);
+    lines.push('');
+  }
+
+  lines.push(`## Records (${report.records.length})`);
+  lines.push('');
+  if (report.records.length > 0) {
+    lines.push(`| Source URL | Destination | Status | Imgs | Links |`);
+    lines.push(`|-----------|-------------|--------|------|-------|`);
+    for (const r of report.records) {
+      const dest = r.destination_path ?? '—';
+      lines.push(`| ${r.source_url} | ${dest} | ${r.status} | ${r.images_rehosted ? '✓' : '✗'} | ${r.links_rewritten ? '✓' : '✗'} |`);
     }
     lines.push('');
   }
 
-  // Image rehost summary
-  if (report.images.details.length > 0) {
-    const failedImages = report.images.details.filter((i) => i.status === 'failed');
-    if (failedImages.length > 0) {
-      lines.push(`## Failed Image Rehosts (${failedImages.length})`);
-      lines.push('');
-      lines.push(`| Original URL | Error |`);
-      lines.push(`|-------------|-------|`);
-      for (const img of failedImages) {
-        lines.push(`| ${img.originalUrl} | ${img.error || 'unknown'} |`);
-      }
-      lines.push('');
-    }
-  }
-
-  // Redirect list
-  if (report.redirectsList.length > 0) {
-    lines.push(`## Redirects (${report.redirectsList.length})`);
-    lines.push('');
-    lines.push(`| Source | Target | Type |`);
-    lines.push(`|--------|--------|------|`);
-    for (const r of report.redirectsList) {
-      lines.push(`| ${r.source} | ${r.target} | ${r.type} |`);
-    }
-    lines.push('');
-  }
-
-  // Output paths
-  if (report.output.seedScript || report.output.config) {
-    lines.push(`## Output`);
-    lines.push('');
-    if (report.output.seedScript) lines.push(`- Seed script: \`${report.output.seedScript}\``);
-    if (report.output.config) lines.push(`- Config: \`${report.output.config}\``);
-    if (report.output.mediaDir) lines.push(`- Media: \`${report.output.mediaDir}\``);
-    if (report.output.envFile) lines.push(`- Environment: \`${report.output.envFile}\``);
-    lines.push('');
-  }
-
-  // Handoff
-  if (report.handoff.templateSlug) {
-    lines.push(`## Next Step`);
-    lines.push('');
-    const pricing = report.handoff.pricing === 'free' ? 'free' : 'available';
-    lines.push(`The **${report.handoff.templateName}** template is ${pricing} from Salish Sea Creatives.`);
-    lines.push(`Pre-wired for your new CMS. → ${report.handoff.templateUrl}`);
-    lines.push('');
-  }
+  lines.push(`_Verify with LinkCanary: crawl ${report.destination_base_url} and cross-reference these records._`);
+  lines.push('');
 
   return lines.join('\n') + '\n';
 }
 
 // ── File Writers ──────────────────────────────────────────────────────────
 
-export function writeMigrationReport(
-  report: MigrationReport,
-  targetDir: string,
-): string {
+export function writeMigrationReport(report: MigrationReport, targetDir: string): string {
+  // Conformance: validate against the v1.0 standard before writing (spec §8).
+  validateMigrationReport(report);
   const path = resolve(targetDir, 'migration-report.json');
   writeFileSync(path, JSON.stringify(report, null, 2) + '\n', 'utf-8');
   return path;
 }
 
-export function writeMarkdownReport(
-  report: MigrationReport,
-  targetDir: string,
-): string {
+export function writeMarkdownReport(report: MigrationReport, targetDir: string): string {
   const path = resolve(targetDir, 'migration-report.md');
   writeFileSync(path, generateMarkdownReport(report), 'utf-8');
   return path;
-}
-
-// ── Backward compatibility ────────────────────────────────────────────────
-// Old function signature used by existing callers. Wraps the new API.
-
-export interface LegacyCounts {
-  posts: number;
-  pages: number;
-  tags: number;
-  authors: number;
-  images: number;
-  imagesDownloaded: number;
-  imagesFailed: number;
-  redirects: number;
-  skippedDrafts: number;
-}
-
-/**
- * @deprecated Use generateMigrationReport(input: ReportInput) instead.
- * Legacy wrapper for backward compatibility.
- */
-export function generateLegacyMigrationReport(
-  sourcePlatform: string,
-  destinationPlatform: string,
-  method: string,
-  counts: LegacyCounts,
-  output: {
-    seedScript?: string;
-    config?: string;
-    mediaDir?: string;
-    envFile?: string;
-  },
-  exportFile?: string,
-): MigrationReport {
-  const totalItems = counts.posts + counts.pages;
-  const extractPassed = totalItems;
-  const transformPassed = totalItems;
-  const loadPassed = totalItems - counts.skippedDrafts;
-
-  const imageDetails: ImageRehost[] = [];
-  // We don't have per-image detail from the legacy path, just counts
-  for (let i = 0; i < counts.imagesDownloaded; i++) {
-    imageDetails.push({ originalUrl: '', localPath: '', status: 'downloaded' });
-  }
-  for (let i = 0; i < counts.imagesFailed; i++) {
-    imageDetails.push({ originalUrl: '', localPath: '', status: 'failed', error: 'download failed' });
-  }
-  const skippedImages = counts.images - counts.imagesDownloaded - counts.imagesFailed;
-  for (let i = 0; i < skippedImages; i++) {
-    imageDetails.push({ originalUrl: '', localPath: '', status: 'skipped' });
-  }
-
-  return generateMigrationReport({
-    sourcePlatform,
-    destinationPlatform,
-    method,
-    counts: {
-      posts: counts.posts,
-      pages: counts.pages,
-      tags: counts.tags,
-      authors: counts.authors,
-      images: counts.images,
-      redirects: counts.redirects,
-      skippedDrafts: counts.skippedDrafts,
-    },
-    stages: {
-      extract: stageStats(totalItems, extractPassed),
-      transform: stageStats(totalItems, transformPassed),
-      load: stageStats(totalItems, loadPassed),
-    },
-    imageDetails,
-    quarantined: [],
-    redirectsList: [],
-    output,
-    exportFile,
-  });
 }

@@ -49,6 +49,7 @@ Active routes have a fully written route spec and a working CLI extractor. Beta 
 - **No lock-in** -- output is plain Markdown, MDX, or JSON in your repository. Portage leaves no runtime behind.
 - **Reversible** -- `--dry-run` prints the full plan without writing anything. Full diffs before any writes.
 - **Inspectable** -- `portage.manifest.json` records every source file, transform, and output path. Commit it alongside your code.
+- **Verifiable** -- `migration-report.json` conforms to the open [Migration Report Schema](cli/docs/migration-report-schema.md) (v1.0), a per-URL record of every migrated source URL. Auditors such as LinkCanary ingest it to verify migrated URLs resolve on the destination site. Machine schema: `cli/schema/migration-report.schema.json`.
 
 ## Project structure
 
@@ -74,6 +75,7 @@ portage/
 ├── cli/                    CLI migration toolkit
 │   ├── src/
 │   │   ├── index.ts            CLI entry + commands
+│   │   ├── slug-audit.ts       Redirect generator (pre/post slug audit → Nginx/Caddy/Netlify/Cloudflare)
 │   │   ├── manifest.ts         Zod schemas + read/write
 │   │   ├── frontmatter.ts      Shared parsing, serialization, field mapping
 │   │   ├── gatsby.ts           Gatsby project reader (extract)
@@ -149,7 +151,26 @@ node dist/index.js load
 | :--- | :--- | :--- | :--- |
 | `--images` | `assets` / `public` / `localize-external` | `assets` | Image placement strategy |
 | `--redirects` | `netlify` / `vercel` / `astro` | `astro` | Redirect map format |
+| `--base-url` | url | -- | Destination site base URL for `migration-report.json` (overrides the astro.config site value) |
 | `--dry-run` | flag | off | Plan only; write nothing |
+
+### slug-audit
+
+Reads a `migration-report.json` (v1.0 standard — any tool can produce it), compares pre-migration slugs against post-migration paths, and generates redirect rules.
+
+```bash
+npx portage slug-audit --gone --format all --out redirects
+```
+
+| Flag | Values | Default | Purpose |
+| :--- | :--- | :--- | :--- |
+| `--report` | path | `migration-report.json` | Migration report to audit |
+| `--format` | `nginx` / `caddy` / `netlify` / `cloudflare` / `all` | `all` | Output format(s); Netlify and Cloudflare share one `_redirects` file |
+| `--out` | dir | `.` | Output directory |
+| `--gone` | flag | off | Also emit `410 Gone` rules for excluded/quarantined records |
+| `--dry-run` | flag | off | Print the rules instead of writing files |
+
+Output files: `nginx-redirects.conf` (location blocks for a `server { }`), `Caddyfile.redirects` (import with `import Caddyfile.redirects`), `_redirects` (drop into the Netlify publish dir or Cloudflare Pages root). Records whose URL did not change are skipped; `failed` records are never emitted (they need review, not a redirect).
 
 ## Output structure
 
@@ -176,3 +197,7 @@ For headless CMS routes, the output varies by destination:
 ## License
 
 MIT -- Salish Sea Consulting
+
+---
+
+**Verify your migration with LinkCanary.** Portage writes `migration-report.json` (Migration Report Schema v1.0) with every source URL and where it landed — [LinkCanary](https://github.com/chesterbeard/LinkCanary) ingests it to cross-reference migrated URLs against what actually resolves: `linkcheck --verify-migration migration-report.json`.
